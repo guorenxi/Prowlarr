@@ -179,7 +179,7 @@ namespace NzbDrone.Core.Indexers.Definitions
 
             if (categories != null && categories.Length > 0)
             {
-                if (term.isNotNullOrWhiteSpace())
+                if (term.IsNotNullOrWhiteSpace())
                 {
                      searchUrl += "&";
                 }
