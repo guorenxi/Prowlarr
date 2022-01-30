@@ -183,7 +183,7 @@ namespace NzbDrone.Core.Indexers.Definitions
                 {
                      searchUrl += "&";
                 }
-                
+
                 searchUrl += "selectedcats2=" + string.Join(",", Capabilities.Categories.MapTorznabCapsToTrackers(categories));
             }
 
