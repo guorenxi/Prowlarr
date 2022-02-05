@@ -19,7 +19,6 @@ namespace NzbDrone.Core.Indexers.Cardigann
 {
     public class Cardigann : TorrentIndexerBase<CardigannSettings>
     {
-        private readonly IIndexerDefinitionUpdateService _definitionService;
         private readonly ICached<CardigannRequestGenerator> _generatorCache;
 
         public override string Name => "Cardigann";
@@ -35,9 +34,9 @@ namespace NzbDrone.Core.Indexers.Cardigann
 
         public override IIndexerRequestGenerator GetRequestGenerator()
         {
-            var generator = _generatorCache.Get(Settings.DefinitionFile, () =>
+            var generator = _generatorCache.Get(((IndexerDefinition)Definition).DefinitionFile, () =>
                 new CardigannRequestGenerator(_configService,
-                    _definitionService.GetCachedDefinition(Settings.DefinitionFile),
+                    _definitionService.GetCachedDefinition(((IndexerDefinition)Definition).DefinitionFile),
                     _logger)
                 {
                     HttpClient = _httpClient,
@@ -57,7 +56,7 @@ namespace NzbDrone.Core.Indexers.Cardigann
         public override IParseIndexerResponse GetParser()
         {
             return new CardigannParser(_configService,
-                _definitionService.GetCachedDefinition(Settings.DefinitionFile),
+                _definitionService.GetCachedDefinition(((IndexerDefinition)Definition).DefinitionFile),
                 _logger)
             {
                 Settings = Settings
@@ -80,7 +79,7 @@ namespace NzbDrone.Core.Indexers.Cardigann
             {
                 foreach (var def in _definitionService.All())
                 {
-                    yield return GetDefinition(def);
+                    yield return GetDefinition((CardigannMetaDefinition)def);
                 }
             }
         }
@@ -92,9 +91,8 @@ namespace NzbDrone.Core.Indexers.Cardigann
                          IConfigService configService,
                          ICacheManager cacheManager,
                          Logger logger)
-            : base(httpClient, eventAggregator, indexerStatusService, configService, logger)
+            : base(httpClient, eventAggregator, indexerStatusService, definitionService, configService, logger)
         {
-            _definitionService = definitionService;
             _generatorCache = cacheManager.GetRollingCache<CardigannRequestGenerator>(GetType(), "CardigannGeneratorCache", TimeSpan.FromMinutes(5));
         }
 
@@ -126,7 +124,8 @@ namespace NzbDrone.Core.Indexers.Cardigann
                 Description = definition.Description,
                 Implementation = GetType().Name,
                 IndexerUrls = definition.Links.ToArray(),
-                Settings = new CardigannSettings { DefinitionFile = definition.File },
+                DefinitionFile = definition.File,
+                Settings = new CardigannSettings(),
                 Protocol = DownloadProtocol.Torrent,
                 Privacy = definition.Type switch
                 {
