@@ -67,10 +67,11 @@ namespace NzbDrone.Core.Applications
         public void HandleAsync(ProviderAddedEvent<IIndexer> message)
         {
             var enabledApps = _applicationsFactory.SyncEnabled();
+            var indexer = _indexerFactory.GetInstance((IndexerDefinition)message.Definition);
 
             foreach (var app in enabledApps)
             {
-                if (ShouldHandleIndexer(app.Definition, message.Definition))
+                if (ShouldHandleIndexer(app.Definition, indexer.Definition))
                 {
                     ExecuteAction(a => a.AddIndexer((IndexerDefinition)message.Definition), app);
                 }
@@ -92,8 +93,9 @@ namespace NzbDrone.Core.Applications
             var enabledApps = _applicationsFactory.SyncEnabled()
                 .Where(n => ((ApplicationDefinition)n.Definition).SyncLevel == ApplicationSyncLevel.FullSync)
                 .ToList();
+            var indexer = _indexerFactory.GetInstance((IndexerDefinition)message.Definition);
 
-            SyncIndexers(enabledApps, new List<IndexerDefinition> { (IndexerDefinition)message.Definition });
+            SyncIndexers(enabledApps, new List<IndexerDefinition> { (IndexerDefinition)indexer.Definition });
         }
 
         public void HandleAsync(ApiKeyChangedEvent message)
@@ -102,7 +104,7 @@ namespace NzbDrone.Core.Applications
 
             var indexers = _indexerFactory.AllProviders().Select(i => (IndexerDefinition)i.Definition).ToList();
 
-            SyncIndexers(enabledApps, indexers, true);
+            SyncIndexers(enabledApps, indexers, true, true);
         }
 
         public void HandleAsync(ProviderBulkUpdatedEvent<IIndexer> message)
@@ -120,11 +122,13 @@ namespace NzbDrone.Core.Applications
 
             var indexers = _indexerFactory.AllProviders().Select(i => (IndexerDefinition)i.Definition).ToList();
 
-            SyncIndexers(enabledApps, indexers, true);
+            SyncIndexers(enabledApps, indexers, true, message.ForceSync);
         }
 
-        private void SyncIndexers(List<IApplication> applications, List<IndexerDefinition> indexers, bool removeRemote = false)
+        private void SyncIndexers(List<IApplication> applications, List<IndexerDefinition> indexers, bool removeRemote = false, bool forceSync = false)
         {
+            var sortedIndexers = indexers.OrderBy(i => i.Name, StringComparer.OrdinalIgnoreCase).ToList();
+
             foreach (var app in applications)
             {
                 var indexerMappings = _appIndexerMapService.GetMappingsForApp(app.Definition.Id);
@@ -155,7 +159,7 @@ namespace NzbDrone.Core.Applications
                     }
                 }
 
-                foreach (var indexer in indexers)
+                foreach (var indexer in sortedIndexers)
                 {
                     var definition = indexer;
 
@@ -163,7 +167,7 @@ namespace NzbDrone.Core.Applications
                     {
                         if (((ApplicationDefinition)app.Definition).SyncLevel == ApplicationSyncLevel.FullSync && ShouldHandleIndexer(app.Definition, indexer))
                         {
-                            ExecuteAction(a => a.UpdateIndexer(definition), app);
+                            ExecuteAction(a => a.UpdateIndexer(definition, forceSync), app);
                         }
                     }
                     else
@@ -181,9 +185,16 @@ namespace NzbDrone.Core.Applications
 
                     foreach (var mapping in indexerMappings)
                     {
+                        var indexer = allIndexers.FirstOrDefault(x => x.Id == mapping.IndexerId);
+
                         if (allIndexers.All(x => x.Id != mapping.IndexerId))
                         {
-                            _logger.Info("Indexer with the ID {0} was found within {1} but is no longer defined within Prowlarr, this is being removed.", mapping.IndexerId, app.Name);
+                            _logger.Warn("Indexer with the ID {0} was found within {1} but is no longer defined within Prowlarr, this is being removed.", mapping.IndexerId, app.Name);
+                            ExecuteAction(a => a.RemoveIndexer(mapping.IndexerId), app);
+                        }
+                        else if (((ApplicationDefinition)app.Definition).SyncLevel == ApplicationSyncLevel.FullSync && indexer != null && !ShouldHandleIndexer(app.Definition, indexer))
+                        {
+                            _logger.Warn("Indexer with the ID {0} was found within {1} but is no longer handled by Prowlarr, this is being removed.", mapping.IndexerId, app.Name);
                             ExecuteAction(a => a.RemoveIndexer(mapping.IndexerId), app);
                         }
                     }
@@ -193,9 +204,17 @@ namespace NzbDrone.Core.Applications
 
         private bool ShouldHandleIndexer(ProviderDefinition app, ProviderDefinition indexer)
         {
+            if (!indexer.Settings.Validate().IsValid)
+            {
+                _logger.Debug("Indexer {0} [{1}] has invalid settings.", indexer.Name, indexer.Id);
+
+                return false;
+            }
+
             if (app.Tags.Empty())
             {
                 _logger.Debug("No tags set to application {0}.", app.Name);
+
                 return true;
             }
 
@@ -203,11 +222,13 @@ namespace NzbDrone.Core.Applications
 
             if (intersectingTags.Any())
             {
-                _logger.Debug("Application {0} and indexer {1} [{2}] have {3} intersecting tags.", app.Name, indexer.Name, indexer.Id, intersectingTags.Length);
+                _logger.Debug("Application {0} and indexer {1} [{2}] have {3} intersecting (matching) tags.", app.Name, indexer.Name, indexer.Id, intersectingTags.Length);
+
                 return true;
             }
 
-            _logger.Debug("Application {0} does not have any intersecting tags with {1} [{2}]. Indexer will not be synced.", app.Name, indexer.Name, indexer.Id);
+            _logger.Debug("Application {0} does not have any intersecting (matching) tags with {1} [{2}]. Indexer will neither be synced to nor removed from the application.", app.Name, indexer.Name, indexer.Id);
+
             return false;
         }
 
@@ -233,11 +254,11 @@ namespace NzbDrone.Core.Applications
                 if (webException.Message.Contains("502") || webException.Message.Contains("503") ||
                     webException.Message.Contains("timed out"))
                 {
-                    _logger.Warn("{0} server is currently unavailable. {1}", this, webException.Message);
+                    _logger.Warn(webException, "{0} server is currently unavailable. {1}", this, webException.Message);
                 }
                 else
                 {
-                    _logger.Warn("{0} {1}", this, webException.Message);
+                    _logger.Warn(webException, "{0} {1}", this, webException.Message);
                 }
             }
             catch (TooManyRequestsException ex)
@@ -245,12 +266,12 @@ namespace NzbDrone.Core.Applications
                 var minimumBackOff = ex.RetryAfter != TimeSpan.Zero ? ex.RetryAfter : TimeSpan.FromHours(1);
                 _applicationStatusService.RecordFailure(application.Definition.Id, minimumBackOff);
 
-                _logger.Warn("API Request Limit reached for {0}", this);
+                _logger.Warn(ex, "API Request Limit reached for {0}", this);
             }
             catch (HttpException ex)
             {
                 _applicationStatusService.RecordFailure(application.Definition.Id);
-                _logger.Warn("{0} {1}", this, ex.Message);
+                _logger.Warn(ex, "{0} {1}", this, ex.Message);
             }
             catch (Exception ex)
             {
@@ -282,11 +303,11 @@ namespace NzbDrone.Core.Applications
                 if (webException.Message.Contains("502") || webException.Message.Contains("503") ||
                     webException.Message.Contains("timed out"))
                 {
-                    _logger.Warn("{0} server is currently unavailable. {1}", this, webException.Message);
+                    _logger.Warn(webException, "{0} server is currently unavailable. {1}", this, webException.Message);
                 }
                 else
                 {
-                    _logger.Warn("{0} {1}", this, webException.Message);
+                    _logger.Warn(webException, "{0} {1}", this, webException.Message);
                 }
             }
             catch (TooManyRequestsException ex)
@@ -294,12 +315,12 @@ namespace NzbDrone.Core.Applications
                 var minimumBackOff = ex.RetryAfter != TimeSpan.Zero ? ex.RetryAfter : TimeSpan.FromHours(1);
                 _applicationStatusService.RecordFailure(application.Definition.Id, minimumBackOff);
 
-                _logger.Warn("API Request Limit reached for {0}", this);
+                _logger.Warn(ex, "API Request Limit reached for {0}", this);
             }
             catch (HttpException ex)
             {
                 _applicationStatusService.RecordFailure(application.Definition.Id);
-                _logger.Warn("{0} {1}", this, ex.Message);
+                _logger.Warn(ex, "{0} {1}", this, ex.Message);
             }
             catch (Exception ex)
             {

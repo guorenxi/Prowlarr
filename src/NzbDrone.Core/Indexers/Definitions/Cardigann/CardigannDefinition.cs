@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 
-namespace NzbDrone.Core.Indexers.Cardigann
+namespace NzbDrone.Core.Indexers.Definitions.Cardigann
 {
     // A Dictionary allowing the same key multiple times
     public class KeyValuePairList : List<KeyValuePair<string, SelectorBlock>>, IDictionary<string, SelectorBlock>
@@ -66,9 +66,9 @@ namespace NzbDrone.Core.Indexers.Cardigann
 
     public class CategorymappingBlock
     {
-        public string id { get; set; }
-        public string cat { get; set; }
-        public string desc { get; set; }
+        public string Id { get; set; }
+        public string Cat { get; set; }
+        public string Desc { get; set; }
         public bool Default { get; set; }
     }
 
@@ -116,6 +116,7 @@ namespace NzbDrone.Core.Indexers.Cardigann
     {
         public string Selector { get; set; }
         public bool Optional { get; set; }
+        public string Default { get; set; }
         public string Text { get; set; }
         public string Attribute { get; set; }
         public string Remove { get; set; }
@@ -146,6 +147,7 @@ namespace NzbDrone.Core.Indexers.Cardigann
         public List<SearchPathBlock> Paths { get; set; }
         public Dictionary<string, List<string>> Headers { get; set; }
         public List<FilterBlock> Keywordsfilters { get; set; }
+        public bool AllowEmptyInputs { get; set; }
         public Dictionary<string, string> Inputs { get; set; }
         public List<ErrorBlock> Error { get; set; }
         public List<FilterBlock> Preprocessingfilters { get; set; }
@@ -159,6 +161,7 @@ namespace NzbDrone.Core.Indexers.Cardigann
         public SelectorBlock Dateheaders { get; set; }
         public SelectorBlock Count { get; set; }
         public bool Multiple { get; set; }
+        public bool MissingAttributeEqualsNoResults { get; set; }
     }
 
     public class SearchPathBlock : RequestBlock

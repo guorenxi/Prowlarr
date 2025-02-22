@@ -7,7 +7,7 @@ using NzbDrone.Core.Messaging.Events;
 
 namespace NzbDrone.Core.Profiles
 {
-    public interface IProfileService
+    public interface IAppProfileService
     {
         AppSyncProfile Add(AppSyncProfile profile);
         void Update(AppSyncProfile profile);
@@ -18,7 +18,7 @@ namespace NzbDrone.Core.Profiles
         AppSyncProfile GetDefaultProfile(string name);
     }
 
-    public class AppSyncProfileService : IProfileService,
+    public class AppSyncProfileService : IAppProfileService,
         IHandle<ApplicationStartedEvent>
     {
         private readonly IAppProfileRepository _profileRepository;
@@ -86,9 +86,9 @@ namespace NzbDrone.Core.Profiles
             var qualityProfile = new AppSyncProfile
             {
                 Name = name,
+                EnableRss = true,
                 EnableAutomaticSearch = true,
                 EnableInteractiveSearch = true,
-                EnableRss = true,
                 MinimumSeeders = 1
             };
 

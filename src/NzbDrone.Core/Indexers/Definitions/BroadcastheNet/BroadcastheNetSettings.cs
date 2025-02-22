@@ -17,7 +17,13 @@ namespace NzbDrone.Core.Indexers.BroadcastheNet
     {
         private static readonly BroadcastheNetSettingsValidator Validator = new ();
 
-        [FieldDefinition(2, Label = "API Key", Privacy = PrivacyLevel.ApiKey)]
+        public BroadcastheNetSettings()
+        {
+            BaseSettings.QueryLimit = 150;
+            BaseSettings.LimitsUnit = (int)IndexerLimitsUnit.Hour;
+        }
+
+        [FieldDefinition(2, Label = "ApiKey", Privacy = PrivacyLevel.ApiKey)]
         public string ApiKey { get; set; }
 
         public override NzbDroneValidationResult Validate()

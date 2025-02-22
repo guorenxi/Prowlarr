@@ -4,6 +4,7 @@ using System.Linq;
 using System.Net;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Http;
+using NzbDrone.Common.Serializer;
 using NzbDrone.Core.Indexers.Exceptions;
 using NzbDrone.Core.Parser;
 using NzbDrone.Core.Parser.Model;
@@ -32,7 +33,9 @@ public class GazelleParser : IParseIndexerResponse
             // Remove cookie cache
             CookiesUpdater(null, null);
 
-            throw new IndexerException(indexerResponse, $"Unexpected response status {indexerResponse.HttpResponse.StatusCode} code from API request");
+            STJson.TryDeserialize<GazelleErrorResponse>(indexerResponse.Content, out var errorResponse);
+
+            throw new IndexerException(indexerResponse, $"Unexpected response status {indexerResponse.HttpResponse.StatusCode} code from indexer request: {errorResponse?.Error ?? "Check the logs for more information."}");
         }
 
         if (!indexerResponse.HttpResponse.Headers.ContentType.Contains(HttpAccept.Json.Value))
@@ -40,7 +43,7 @@ public class GazelleParser : IParseIndexerResponse
             // Remove cookie cache
             CookiesUpdater(null, null);
 
-            throw new IndexerException(indexerResponse, $"Unexpected response header {indexerResponse.HttpResponse.Headers.ContentType} from API request, expected {HttpAccept.Json.Value}");
+            throw new IndexerException(indexerResponse, $"Unexpected response header {indexerResponse.HttpResponse.Headers.ContentType} from indexer request, expected {HttpAccept.Json.Value}");
         }
 
         var jsonResponse = new HttpResponse<GazelleResponse>(indexerResponse.HttpResponse);
@@ -59,6 +62,14 @@ public class GazelleParser : IParseIndexerResponse
             {
                 foreach (var torrent in result.Torrents)
                 {
+                    var isFreeLeech = torrent.IsFreeLeech || torrent.IsNeutralLeech || torrent.IsPersonalFreeLeech;
+
+                    // skip releases that cannot be used with freeleech tokens when the option is enabled
+                    if (Settings.UseFreeleechToken == (int)GazelleFreeleechTokenAction.Required && !torrent.CanUseToken && !isFreeLeech)
+                    {
+                        continue;
+                    }
+
                     var id = torrent.TorrentId;
 
                     var title = $"{result.Artist} - {result.GroupName} ({result.GroupYear}) [{torrent.Format} {torrent.Encoding}] [{torrent.Media}]";
@@ -69,23 +80,23 @@ public class GazelleParser : IParseIndexerResponse
 
                     var infoUrl = GetInfoUrl(result.GroupId, id);
 
-                    var release = new GazelleInfo
+                    var release = new TorrentInfo
                     {
                         Guid = infoUrl,
+                        InfoUrl = infoUrl,
+                        DownloadUrl = GetDownloadUrl(id, torrent.CanUseToken && !isFreeLeech),
                         Title = WebUtility.HtmlDecode(title),
                         Container = torrent.Encoding,
                         Files = torrent.FileCount,
                         Grabs = torrent.Snatches,
                         Codec = torrent.Format,
                         Size = long.Parse(torrent.Size),
-                        DownloadUrl = GetDownloadUrl(id),
-                        InfoUrl = infoUrl,
                         Seeders = int.Parse(torrent.Seeders),
                         Peers = int.Parse(torrent.Leechers) + int.Parse(torrent.Seeders),
                         PublishDate = torrent.Time.ToUniversalTime(),
                         Scene = torrent.Scene,
                         PosterUrl = posterUrl,
-                        DownloadVolumeFactor = torrent.IsFreeLeech || torrent.IsNeutralLeech || torrent.IsPersonalFreeLeech ? 0 : 1,
+                        DownloadVolumeFactor = isFreeLeech ? 0 : 1,
                         UploadVolumeFactor = torrent.IsNeutralLeech ? 0 : 1
                     };
 
@@ -104,24 +115,32 @@ public class GazelleParser : IParseIndexerResponse
             }
             else
             {
+                var isFreeLeech = result.IsFreeLeech || result.IsNeutralLeech || result.IsPersonalFreeLeech;
+
+                // skip releases that cannot be used with freeleech tokens when the option is enabled
+                if (Settings.UseFreeleechToken == (int)GazelleFreeleechTokenAction.Required && !result.CanUseToken && !isFreeLeech)
+                {
+                    continue;
+                }
+
                 var id = result.TorrentId;
                 var groupName = WebUtility.HtmlDecode(result.GroupName);
                 var infoUrl = GetInfoUrl(result.GroupId, id);
 
-                var release = new GazelleInfo
+                var release = new TorrentInfo
                 {
                     Guid = infoUrl,
+                    InfoUrl = infoUrl,
+                    DownloadUrl = GetDownloadUrl(id, result.CanUseToken && !isFreeLeech),
                     Title = groupName,
                     Size = long.Parse(result.Size),
-                    DownloadUrl = GetDownloadUrl(id),
-                    InfoUrl = infoUrl,
                     Seeders = int.Parse(result.Seeders),
                     Peers = int.Parse(result.Leechers) + int.Parse(result.Seeders),
                     Files = result.FileCount,
                     Grabs = result.Snatches,
                     PublishDate = long.TryParse(result.GroupTime, out var num) ? DateTimeOffset.FromUnixTimeSeconds(num).UtcDateTime : DateTimeUtil.FromFuzzyTime((string)result.GroupTime),
                     PosterUrl = posterUrl,
-                    DownloadVolumeFactor = result.IsFreeLeech || result.IsNeutralLeech || result.IsPersonalFreeLeech ? 0 : 1,
+                    DownloadVolumeFactor = isFreeLeech ? 0 : 1,
                     UploadVolumeFactor = result.IsNeutralLeech ? 0 : 1
                 };
 
@@ -146,13 +165,17 @@ public class GazelleParser : IParseIndexerResponse
                 .ToArray();
     }
 
-    protected virtual string GetDownloadUrl(int torrentId)
+    protected virtual string GetDownloadUrl(int torrentId, bool canUseToken)
     {
         var url = new HttpUri(Settings.BaseUrl)
             .CombinePath("/torrents.php")
             .AddQueryParam("action", "download")
-            .AddQueryParam("usetoken", Settings.UseFreeleechToken ? "1" : "0")
             .AddQueryParam("id", torrentId);
+
+        if (Settings.UseFreeleechToken is (int)GazelleFreeleechTokenAction.Preferred or (int)GazelleFreeleechTokenAction.Required && canUseToken)
+        {
+            url = url.AddQueryParam("usetoken", "1");
+        }
 
         return url.FullUri;
     }

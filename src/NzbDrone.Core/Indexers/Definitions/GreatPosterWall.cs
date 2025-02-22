@@ -7,6 +7,7 @@ using Newtonsoft.Json;
 using NLog;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Http;
+using NzbDrone.Common.Serializer;
 using NzbDrone.Core.Annotations;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Indexers.Definitions.Gazelle;
@@ -42,7 +43,19 @@ public class GreatPosterWall : GazelleBase<GreatPosterWallSettings>
 
     public override IParseIndexerResponse GetParser()
     {
-        return new GreatPosterWallParser(Settings, Capabilities);
+        return new GreatPosterWallParser(Settings, Capabilities, _logger);
+    }
+
+    protected override IList<ReleaseInfo> CleanupReleases(IEnumerable<ReleaseInfo> releases, SearchCriteriaBase searchCriteria)
+    {
+        var cleanReleases = base.CleanupReleases(releases, searchCriteria);
+
+        if (searchCriteria.IsRssSearch)
+        {
+            cleanReleases = cleanReleases.Take(50).ToList();
+        }
+
+        return cleanReleases;
     }
 
     protected override IndexerCapabilities SetCapabilities()
@@ -77,7 +90,7 @@ public class GreatPosterWallRequestGenerator : GazelleRequestGenerator
 
     public override IndexerPageableRequestChain GetSearchRequests(MovieSearchCriteria searchCriteria)
     {
-        var parameters = GetBasicSearchParameters(searchCriteria.SearchTerm, searchCriteria.Categories);
+        var parameters = GetBasicSearchParameters(searchCriteria, searchCriteria.SearchTerm);
 
         if (searchCriteria.ImdbId != null)
         {
@@ -89,9 +102,9 @@ public class GreatPosterWallRequestGenerator : GazelleRequestGenerator
         return pageableRequests;
     }
 
-    protected override NameValueCollection GetBasicSearchParameters(string term, int[] categories)
+    protected override NameValueCollection GetBasicSearchParameters(SearchCriteriaBase searchCriteria, string term)
     {
-        var parameters = base.GetBasicSearchParameters(term, categories);
+        var parameters = base.GetBasicSearchParameters(searchCriteria, term);
 
         if (_settings.FreeleechOnly)
         {
@@ -105,12 +118,15 @@ public class GreatPosterWallRequestGenerator : GazelleRequestGenerator
 public class GreatPosterWallParser : GazelleParser
 {
     private readonly GreatPosterWallSettings _settings;
+    private readonly Logger _logger;
+
     private readonly HashSet<string> _hdResolutions = new () { "1080p", "1080i", "720p" };
 
-    public GreatPosterWallParser(GreatPosterWallSettings settings, IndexerCapabilities capabilities)
+    public GreatPosterWallParser(GreatPosterWallSettings settings, IndexerCapabilities capabilities, Logger logger)
         : base(settings, capabilities)
     {
         _settings = settings;
+        _logger = logger;
     }
 
     public override IList<ReleaseInfo> ParseResponse(IndexerResponse indexerResponse)
@@ -121,22 +137,26 @@ public class GreatPosterWallParser : GazelleParser
         {
             if (indexerResponse.HttpResponse.HasHttpRedirect)
             {
-                if (indexerResponse.HttpResponse.RedirectUrl.ContainsIgnoreCase("login.php"))
+                _logger.Warn("Redirected to {0} from indexer request", indexerResponse.HttpResponse.RedirectUrl);
+
+                if (indexerResponse.HttpResponse.RedirectUrl.ContainsIgnoreCase("/login.php"))
                 {
                     // Remove cookie cache
                     CookiesUpdater(null, null);
                     throw new IndexerException(indexerResponse, "We are being redirected to the login page. Most likely your session expired or was killed. Recheck your cookie or credentials and try testing the indexer.");
                 }
 
-                throw new IndexerException(indexerResponse, $"Redirected to {indexerResponse.HttpResponse.RedirectUrl} from API request");
+                throw new IndexerException(indexerResponse, $"Redirected to {indexerResponse.HttpResponse.RedirectUrl} from indexer request");
             }
 
-            throw new IndexerException(indexerResponse, $"Unexpected response status {indexerResponse.HttpResponse.StatusCode} code from API request");
+            STJson.TryDeserialize<GazelleErrorResponse>(indexerResponse.Content, out var errorResponse);
+
+            throw new IndexerException(indexerResponse, $"Unexpected response status {indexerResponse.HttpResponse.StatusCode} code from indexer request: {errorResponse?.Error ?? "Check the logs for more information."}");
         }
 
         if (!indexerResponse.HttpResponse.Headers.ContentType.Contains(HttpAccept.Json.Value))
         {
-            throw new IndexerException(indexerResponse, $"Unexpected response header {indexerResponse.HttpResponse.Headers.ContentType} from API request, expected {HttpAccept.Json.Value}");
+            throw new IndexerException(indexerResponse, $"Unexpected response header {indexerResponse.HttpResponse.Headers.ContentType} from indexer request, expected {HttpAccept.Json.Value}");
         }
 
         var jsonResponse = new HttpResponse<GreatPosterWallResponse>(indexerResponse.HttpResponse);
@@ -151,16 +171,24 @@ public class GreatPosterWallParser : GazelleParser
         {
             foreach (var torrent in result.Torrents)
             {
+                var isFreeLeech = torrent.IsFreeleech || torrent.IsNeutralLeech || torrent.IsPersonalFreeleech;
+
+                // skip releases that cannot be used with freeleech tokens when the option is enabled
+                if (_settings.UseFreeleechToken == (int)GazelleFreeleechTokenAction.Required && !torrent.CanUseToken && !isFreeLeech)
+                {
+                    continue;
+                }
+
                 var infoUrl = GetInfoUrl(result.GroupId.ToString(), torrent.TorrentId);
                 var time = DateTime.SpecifyKind(torrent.Time, DateTimeKind.Unspecified);
 
-                var release = new GazelleInfo
+                var release = new TorrentInfo
                 {
-                    Title = WebUtility.HtmlDecode(torrent.FileName).Trim(),
                     Guid = infoUrl,
                     InfoUrl = infoUrl,
+                    DownloadUrl = GetDownloadUrl(torrent.TorrentId, torrent.CanUseToken && !isFreeLeech),
+                    Title = WebUtility.HtmlDecode(torrent.FileName).Trim(),
                     PosterUrl = GetPosterUrl(result.Cover),
-                    DownloadUrl = GetDownloadUrl(torrent.TorrentId, torrent.CanUseToken),
                     PublishDate = new DateTimeOffset(time, TimeSpan.FromHours(8)).UtcDateTime, // Time is Chinese Time, add 8 hours difference from UTC
                     Categories = ParseCategories(torrent),
                     Size = torrent.Size,
@@ -169,13 +197,13 @@ public class GreatPosterWallParser : GazelleParser
                     Grabs = torrent.Snatches,
                     Files = torrent.FileCount,
                     Scene = torrent.Scene,
-                    DownloadVolumeFactor = torrent.IsFreeleech || torrent.IsNeutralLeech || torrent.IsPersonalFreeleech ? 0 : 1,
+                    DownloadVolumeFactor = isFreeLeech ? 0 : 1,
                     UploadVolumeFactor = torrent.IsNeutralLeech ? 0 : 1,
                     MinimumRatio = 1,
                     MinimumSeedTime = 172800 // 48 hours
                 };
 
-                var imdbId = ParseUtil.GetImdbID(result.ImdbId);
+                var imdbId = ParseUtil.GetImdbId(result.ImdbId);
                 if (imdbId != null)
                 {
                     release.ImdbId = (int)imdbId;
@@ -210,13 +238,17 @@ public class GreatPosterWallParser : GazelleParser
             .ToArray();
     }
 
-    private string GetDownloadUrl(int torrentId, bool canUseToken)
+    protected override string GetDownloadUrl(int torrentId, bool canUseToken)
     {
         var url = new HttpUri(_settings.BaseUrl)
             .CombinePath("/torrents.php")
             .AddQueryParam("action", "download")
-            .AddQueryParam("usetoken", _settings.UseFreeleechToken && canUseToken ? "1" : "0")
             .AddQueryParam("id", torrentId);
+
+        if (_settings.UseFreeleechToken is (int)GazelleFreeleechTokenAction.Preferred or (int)GazelleFreeleechTokenAction.Required && canUseToken)
+        {
+            url = url.AddQueryParam("usetoken", "1");
+        }
 
         return url.FullUri;
     }

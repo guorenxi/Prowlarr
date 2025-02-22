@@ -7,8 +7,10 @@ import ModalContent from 'Components/Modal/ModalContent';
 import ModalFooter from 'Components/Modal/ModalFooter';
 import ModalHeader from 'Components/Modal/ModalHeader';
 import { kinds } from 'Helpers/Props';
-import { bulkDeleteIndexers } from 'Store/Actions/indexerIndexActions';
+import Indexer from 'Indexer/Indexer';
+import { bulkDeleteIndexers } from 'Store/Actions/indexerActions';
 import createAllIndexersSelector from 'Store/Selectors/createAllIndexersSelector';
+import translate from 'Utilities/String/translate';
 import styles from './DeleteIndexerModalContent.css';
 
 interface DeleteIndexerModalContentProps {
@@ -19,21 +21,21 @@ interface DeleteIndexerModalContentProps {
 function DeleteIndexerModalContent(props: DeleteIndexerModalContentProps) {
   const { indexerIds, onModalClose } = props;
 
-  const allIndexer = useSelector(createAllIndexersSelector());
+  const allIndexers: Indexer[] = useSelector(createAllIndexersSelector());
   const dispatch = useDispatch();
 
-  const indexers = useMemo(() => {
-    const indexers = indexerIds.map((id) => {
-      return allIndexer.find((s) => s.id === id);
-    });
+  const indexers = useMemo((): Indexer[] => {
+    const indexerList = indexerIds.map((id) => {
+      return allIndexers.find((s) => s.id === id);
+    }) as Indexer[];
 
-    return orderBy(indexers, ['sortTitle']);
-  }, [indexerIds, allIndexer]);
+    return orderBy(indexerList, ['sortName']);
+  }, [indexerIds, allIndexers]);
 
   const onDeleteIndexerConfirmed = useCallback(() => {
     dispatch(
       bulkDeleteIndexers({
-        indexerIds,
+        ids: indexerIds,
       })
     );
 
@@ -42,17 +44,19 @@ function DeleteIndexerModalContent(props: DeleteIndexerModalContentProps) {
 
   return (
     <ModalContent onModalClose={onModalClose}>
-      <ModalHeader>Delete Selected Indexer</ModalHeader>
+      <ModalHeader>{translate('DeleteSelectedIndexers')}</ModalHeader>
 
       <ModalBody>
         <div className={styles.message}>
-          {`Are you sure you want to delete ${indexers.length} selected indexers?`}
+          {translate('DeleteSelectedIndexersMessageText', {
+            count: indexers.length,
+          })}
         </div>
 
         <ul>
           {indexers.map((s) => {
             return (
-              <li key={s.name}>
+              <li key={s.id}>
                 <span>{s.name}</span>
               </li>
             );
@@ -61,10 +65,10 @@ function DeleteIndexerModalContent(props: DeleteIndexerModalContentProps) {
       </ModalBody>
 
       <ModalFooter>
-        <Button onPress={onModalClose}>Cancel</Button>
+        <Button onPress={onModalClose}>{translate('Cancel')}</Button>
 
         <Button kind={kinds.DANGER} onPress={onDeleteIndexerConfirmed}>
-          Delete
+          {translate('Delete')}
         </Button>
       </ModalFooter>
     </ModalContent>

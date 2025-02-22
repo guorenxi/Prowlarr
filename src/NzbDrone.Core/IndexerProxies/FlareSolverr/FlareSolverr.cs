@@ -100,12 +100,17 @@ namespace NzbDrone.Core.IndexerProxies.FlareSolverr
             FlareSolverrRequest req;
 
             var url = request.Url.ToString();
-            var userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/81.0.4044.138 Safari/537.36";
             var maxTimeout = Settings.RequestTimeout * 1000;
 
-            // Use Proxy if no credentials are set (creds not supported as of FS 2.2.9)
             var proxySettings = _proxySettingsProvider.GetProxySettings();
-            var proxyUrl = proxySettings != null && proxySettings.Username.IsNullOrWhiteSpace() && proxySettings.Password.IsNullOrWhiteSpace() ? GetProxyUri(proxySettings) : null;
+            var proxyUrl = proxySettings != null ? GetProxyUri(proxySettings) : null;
+
+            var requestProxy = new FlareSolverrProxy
+            {
+                Url = proxyUrl?.OriginalString,
+                Username = proxySettings != null && proxySettings.Username.IsNotNullOrWhiteSpace() ? proxySettings.Username : null,
+                Password = proxySettings != null && proxySettings.Password.IsNotNullOrWhiteSpace() ? proxySettings.Password : null
+            };
 
             if (request.Method == HttpMethod.Get)
             {
@@ -114,11 +119,7 @@ namespace NzbDrone.Core.IndexerProxies.FlareSolverr
                     Cmd = "request.get",
                     Url = url,
                     MaxTimeout = maxTimeout,
-                    UserAgent = userAgent,
-                    Proxy = new FlareSolverrProxy
-                    {
-                        Url = proxyUrl?.AbsoluteUri
-                    }
+                    Proxy = requestProxy
                 };
             }
             else if (request.Method == HttpMethod.Post)
@@ -141,11 +142,7 @@ namespace NzbDrone.Core.IndexerProxies.FlareSolverr
                             ContentLength = null
                         },
                         MaxTimeout = maxTimeout,
-                        UserAgent = userAgent,
-                        Proxy = new FlareSolverrProxy
-                        {
-                            Url = proxyUrl?.AbsoluteUri
-                        }
+                        Proxy = requestProxy
                     };
                 }
                 else if (contentTypeType.Contains("multipart/form-data")
@@ -172,6 +169,7 @@ namespace NzbDrone.Core.IndexerProxies.FlareSolverr
             newRequest.LogResponseContent = true;
             newRequest.RequestTimeout = TimeSpan.FromSeconds(Settings.RequestTimeout + 5);
             newRequest.SetContent(req.ToJson());
+            newRequest.ContentSummary = req.ToJson(Formatting.None);
 
             _logger.Debug("Cloudflare Detected, Applying FlareSolverr Proxy {0} to request {1}", Name, request.Url);
 
@@ -192,16 +190,16 @@ namespace NzbDrone.Core.IndexerProxies.FlareSolverr
 
                 if (response.StatusCode != HttpStatusCode.OK)
                 {
-                    _logger.Error("Proxy Health Check failed: {0}", response.StatusCode);
-                    failures.Add(new NzbDroneValidationFailure("Host", string.Format(_localizationService.GetLocalizedString("ProxyCheckBadRequestMessage"), response.StatusCode)));
+                    _logger.Error("Proxy validation failed: {0}", response.StatusCode);
+                    failures.Add(new NzbDroneValidationFailure("Host", _localizationService.GetLocalizedString("ProxyValidationBadRequest", new Dictionary<string, object> { { "statusCode", response.StatusCode } })));
                 }
 
                 var result = JsonConvert.DeserializeObject<FlareSolverrResponse>(response.Content);
             }
             catch (Exception ex)
             {
-                _logger.Error(ex, "Proxy Health Check failed");
-                failures.Add(new NzbDroneValidationFailure("Host", string.Format(_localizationService.GetLocalizedString("ProxyCheckFailedToTestMessage"), request.Url.Host)));
+                _logger.Error(ex, "Proxy validation failed");
+                failures.Add(new NzbDroneValidationFailure("Host", _localizationService.GetLocalizedString("ProxyValidationUnableToConnect", new Dictionary<string, object> { { "exceptionMessage", ex.Message } })));
             }
 
             return new ValidationResult(failures);
@@ -209,24 +207,19 @@ namespace NzbDrone.Core.IndexerProxies.FlareSolverr
 
         private Uri GetProxyUri(HttpProxySettings proxySettings)
         {
-            switch (proxySettings.Type)
+            return proxySettings.Type switch
             {
-                case ProxyType.Http:
-                    return new Uri("http://" + proxySettings.Host + ":" + proxySettings.Port);
-                case ProxyType.Socks4:
-                    return new Uri("socks4://" + proxySettings.Host + ":" + proxySettings.Port);
-                case ProxyType.Socks5:
-                    return new Uri("socks5://" + proxySettings.Host + ":" + proxySettings.Port);
-                default:
-                    return null;
-            }
+                ProxyType.Http => new Uri("http://" + proxySettings.Host + ":" + proxySettings.Port),
+                ProxyType.Socks4 => new Uri("socks4://" + proxySettings.Host + ":" + proxySettings.Port),
+                ProxyType.Socks5 => new Uri("socks5://" + proxySettings.Host + ":" + proxySettings.Port),
+                _ => null
+            };
         }
 
         private class FlareSolverrRequest
         {
             public string Cmd { get; set; }
             public string Url { get; set; }
-            public string UserAgent { get; set; }
             public Cookie[] Cookies { get; set; }
             public FlareSolverrProxy Proxy { get; set; }
         }
@@ -251,6 +244,8 @@ namespace NzbDrone.Core.IndexerProxies.FlareSolverr
         private class FlareSolverrProxy
         {
             public string Url { get; set; }
+            public string Username { get; set; }
+            public string Password { get; set; }
         }
 
         private class HeadersPost

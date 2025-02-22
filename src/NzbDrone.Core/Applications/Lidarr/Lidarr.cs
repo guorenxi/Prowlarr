@@ -3,10 +3,12 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Net;
 using FluentValidation.Results;
+using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using NLog;
 using NzbDrone.Common.Cache;
 using NzbDrone.Common.Extensions;
+using NzbDrone.Common.Http;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Indexers;
 
@@ -20,8 +22,8 @@ namespace NzbDrone.Core.Applications.Lidarr
         private readonly ICached<List<LidarrIndexer>> _schemaCache;
         private readonly IConfigFileProvider _configFileProvider;
 
-        public Lidarr(ICacheManager cacheManager, ILidarrV1Proxy lidarrV1Proxy, IConfigFileProvider configFileProvider, IAppIndexerMapService appIndexerMapService, Logger logger)
-            : base(appIndexerMapService, logger)
+        public Lidarr(ICacheManager cacheManager, ILidarrV1Proxy lidarrV1Proxy, IConfigFileProvider configFileProvider, IAppIndexerMapService appIndexerMapService, IIndexerFactory indexerFactory, Logger logger)
+            : base(appIndexerMapService, indexerFactory, logger)
         {
             _schemaCache = cacheManager.GetCache<List<LidarrIndexer>>(GetType());
             _lidarrV1Proxy = lidarrV1Proxy;
@@ -47,12 +49,40 @@ namespace NzbDrone.Core.Applications.Lidarr
 
             try
             {
-                failures.AddIfNotNull(_lidarrV1Proxy.TestConnection(BuildLidarrIndexer(testIndexer, DownloadProtocol.Usenet), Settings));
+                failures.AddIfNotNull(_lidarrV1Proxy.TestConnection(BuildLidarrIndexer(testIndexer, testIndexer.Capabilities, DownloadProtocol.Usenet), Settings));
             }
-            catch (WebException ex)
+            catch (HttpException ex)
             {
-                _logger.Error(ex, "Unable to send test message");
-                failures.AddIfNotNull(new ValidationFailure("BaseUrl", "Unable to complete application test, cannot connect to Lidarr"));
+                switch (ex.Response.StatusCode)
+                {
+                    case HttpStatusCode.Unauthorized:
+                        _logger.Warn(ex, "API Key is invalid");
+                        failures.AddIfNotNull(new ValidationFailure("ApiKey", "API Key is invalid"));
+                        break;
+                    case HttpStatusCode.BadRequest:
+                        _logger.Warn(ex, "Prowlarr URL is invalid");
+                        failures.AddIfNotNull(new ValidationFailure("ProwlarrUrl", "Prowlarr URL is invalid, Lidarr cannot connect to Prowlarr"));
+                        break;
+                    case HttpStatusCode.SeeOther:
+                    case HttpStatusCode.TemporaryRedirect:
+                        _logger.Warn(ex, "Lidarr returned redirect and is invalid");
+                        failures.AddIfNotNull(new ValidationFailure("BaseUrl", "Lidarr URL is invalid, Prowlarr cannot connect to Lidarr - are you missing a URL base?"));
+                        break;
+                    default:
+                        _logger.Warn(ex, "Unable to complete application test");
+                        failures.AddIfNotNull(new ValidationFailure("BaseUrl", $"Unable to complete application test, cannot connect to Lidarr. {ex.Message}"));
+                        break;
+                }
+            }
+            catch (JsonReaderException ex)
+            {
+                _logger.Error(ex, "Unable to parse JSON response from application");
+                failures.AddIfNotNull(new ValidationFailure("BaseUrl", $"Unable to parse JSON response from application. {ex.Message}"));
+            }
+            catch (Exception ex)
+            {
+                _logger.Warn(ex, "Unable to complete application test");
+                failures.AddIfNotNull(new ValidationFailure("BaseUrl", $"Unable to complete application test, cannot connect to Lidarr. {ex.Message}"));
             }
 
             return new ValidationResult(failures);
@@ -61,21 +91,26 @@ namespace NzbDrone.Core.Applications.Lidarr
         public override List<AppIndexerMap> GetIndexerMappings()
         {
             var indexers = _lidarrV1Proxy.GetIndexers(Settings)
-                .Where(i => i.Implementation == "Newznab" || i.Implementation == "Torznab");
+                .Where(i => i.Implementation is "Newznab" or "Torznab");
 
             var mappings = new List<AppIndexerMap>();
 
             foreach (var indexer in indexers)
             {
-                if ((string)indexer.Fields.FirstOrDefault(x => x.Name == "apiKey")?.Value == _configFileProvider.ApiKey)
-                {
-                    var match = AppIndexerRegex.Match((string)indexer.Fields.FirstOrDefault(x => x.Name == "baseUrl").Value);
+                var baseUrl = (string)indexer.Fields.FirstOrDefault(x => x.Name == "baseUrl")?.Value ?? string.Empty;
 
-                    if (match.Groups["indexer"].Success && int.TryParse(match.Groups["indexer"].Value, out var indexerId))
-                    {
-                        // Add parsed mapping if it's mapped to a Indexer in this Prowlarr instance
-                        mappings.Add(new AppIndexerMap { IndexerId = indexerId, RemoteIndexerId = indexer.Id });
-                    }
+                if (!baseUrl.StartsWith(Settings.ProwlarrUrl.TrimEnd('/')) &&
+                    (string)indexer.Fields.FirstOrDefault(x => x.Name == "apiKey")?.Value != _configFileProvider.ApiKey)
+                {
+                    continue;
+                }
+
+                var match = AppIndexerRegex.Match(baseUrl);
+
+                if (match.Groups["indexer"].Success && int.TryParse(match.Groups["indexer"].Value, out var indexerId))
+                {
+                    // Add parsed mapping if it's mapped to a Indexer in this Prowlarr instance
+                    mappings.Add(new AppIndexerMap { IndexerId = indexerId, RemoteIndexerId = indexer.Id });
                 }
             }
 
@@ -84,7 +119,9 @@ namespace NzbDrone.Core.Applications.Lidarr
 
         public override void AddIndexer(IndexerDefinition indexer)
         {
-            if (indexer.Capabilities.Categories.SupportedCategories(Settings.SyncCategories.ToArray()).Empty())
+            var indexerCapabilities = GetIndexerCapabilities(indexer);
+
+            if (indexerCapabilities.Categories.SupportedCategories(Settings.SyncCategories.ToArray()).Empty())
             {
                 _logger.Trace("Skipping add for indexer {0} [{1}] due to no app Sync Categories supported by the indexer", indexer.Name, indexer.Id);
 
@@ -93,9 +130,17 @@ namespace NzbDrone.Core.Applications.Lidarr
 
             _logger.Trace("Adding indexer {0} [{1}]", indexer.Name, indexer.Id);
 
-            var lidarrIndexer = BuildLidarrIndexer(indexer, indexer.Protocol);
+            var lidarrIndexer = BuildLidarrIndexer(indexer, indexerCapabilities, indexer.Protocol);
 
             var remoteIndexer = _lidarrV1Proxy.AddIndexer(lidarrIndexer, Settings);
+
+            if (remoteIndexer == null)
+            {
+                _logger.Debug("Failed to add {0} [{1}]", indexer.Name, indexer.Id);
+
+                return;
+            }
+
             _appIndexerMapService.Insert(new AppIndexerMap { AppId = Definition.Id, IndexerId = indexer.Id, RemoteIndexerId = remoteIndexer.Id });
         }
 
@@ -113,24 +158,27 @@ namespace NzbDrone.Core.Applications.Lidarr
             }
         }
 
-        public override void UpdateIndexer(IndexerDefinition indexer)
+        public override void UpdateIndexer(IndexerDefinition indexer, bool forceSync = false)
         {
             _logger.Debug("Updating indexer {0} [{1}]", indexer.Name, indexer.Id);
 
+            var indexerCapabilities = GetIndexerCapabilities(indexer);
             var appMappings = _appIndexerMapService.GetMappingsForApp(Definition.Id);
             var indexerMapping = appMappings.FirstOrDefault(m => m.IndexerId == indexer.Id);
 
-            var lidarrIndexer = BuildLidarrIndexer(indexer, indexer.Protocol, indexerMapping?.RemoteIndexerId ?? 0);
+            var lidarrIndexer = BuildLidarrIndexer(indexer, indexerCapabilities, indexer.Protocol, indexerMapping?.RemoteIndexerId ?? 0);
 
             var remoteIndexer = _lidarrV1Proxy.GetIndexer(indexerMapping.RemoteIndexerId, Settings);
 
             if (remoteIndexer != null)
             {
-                _logger.Debug("Remote indexer found, syncing with current settings");
+                _logger.Debug("Remote indexer {0} [{1}] found", remoteIndexer.Name, remoteIndexer.Id);
 
-                if (!lidarrIndexer.Equals(remoteIndexer))
+                if (!lidarrIndexer.Equals(remoteIndexer) || forceSync)
                 {
-                    if (indexer.Capabilities.Categories.SupportedCategories(Settings.SyncCategories.ToArray()).Any())
+                    _logger.Debug("Syncing remote indexer with current settings");
+
+                    if (indexerCapabilities.Categories.SupportedCategories(Settings.SyncCategories.ToArray()).Any())
                     {
                         // Retain user fields not-affiliated with Prowlarr
                         lidarrIndexer.Fields.AddRange(remoteIndexer.Fields.Where(f => lidarrIndexer.Fields.All(s => s.Name != f.Name)));
@@ -156,7 +204,7 @@ namespace NzbDrone.Core.Applications.Lidarr
             {
                 _appIndexerMapService.Delete(indexerMapping.Id);
 
-                if (indexer.Capabilities.Categories.SupportedCategories(Settings.SyncCategories.ToArray()).Any())
+                if (indexerCapabilities.Categories.SupportedCategories(Settings.SyncCategories.ToArray()).Any())
                 {
                     _logger.Debug("Remote indexer not found, re-adding {0} [{1}] to Lidarr", indexer.Name, indexer.Id);
                     lidarrIndexer.Id = 0;
@@ -170,11 +218,17 @@ namespace NzbDrone.Core.Applications.Lidarr
             }
         }
 
-        private LidarrIndexer BuildLidarrIndexer(IndexerDefinition indexer, DownloadProtocol protocol, int id = 0)
+        private LidarrIndexer BuildLidarrIndexer(IndexerDefinition indexer, IndexerCapabilities indexerCapabilities, DownloadProtocol protocol, int id = 0)
         {
             var cacheKey = $"{Settings.BaseUrl}";
             var schemas = _schemaCache.Get(cacheKey, () => _lidarrV1Proxy.GetIndexerSchema(Settings), TimeSpan.FromDays(7));
-            var syncFields = new[] { "baseUrl", "apiPath", "apiKey", "categories", "minimumSeeders", "seedCriteria.seedRatio", "seedCriteria.seedTime", "seedCriteria.discographySeedTime" };
+            var syncFields = new List<string> { "baseUrl", "apiPath", "apiKey", "categories", "minimumSeeders", "seedCriteria.seedRatio", "seedCriteria.seedTime", "seedCriteria.discographySeedTime", "rejectBlocklistedTorrentHashesWhileGrabbing" };
+
+            if (id == 0)
+            {
+                // Ensuring backward compatibility with older versions on first sync
+                syncFields.AddRange(new List<string> { "earlyReleaseLimit", "additionalParameters" });
+            }
 
             var newznab = schemas.First(i => i.Implementation == "Newznab");
             var torznab = schemas.First(i => i.Implementation == "Torznab");
@@ -200,7 +254,7 @@ namespace NzbDrone.Core.Applications.Lidarr
             lidarrIndexer.Fields.FirstOrDefault(x => x.Name == "baseUrl").Value = $"{Settings.ProwlarrUrl.TrimEnd('/')}/{indexer.Id}/";
             lidarrIndexer.Fields.FirstOrDefault(x => x.Name == "apiPath").Value = "/api";
             lidarrIndexer.Fields.FirstOrDefault(x => x.Name == "apiKey").Value = _configFileProvider.ApiKey;
-            lidarrIndexer.Fields.FirstOrDefault(x => x.Name == "categories").Value = JArray.FromObject(indexer.Capabilities.Categories.SupportedCategories(Settings.SyncCategories.ToArray()));
+            lidarrIndexer.Fields.FirstOrDefault(x => x.Name == "categories").Value = JArray.FromObject(indexerCapabilities.Categories.SupportedCategories(Settings.SyncCategories.ToArray()));
 
             if (indexer.Protocol == DownloadProtocol.Torrent)
             {
@@ -208,9 +262,14 @@ namespace NzbDrone.Core.Applications.Lidarr
                 lidarrIndexer.Fields.FirstOrDefault(x => x.Name == "seedCriteria.seedRatio").Value = ((ITorrentIndexerSettings)indexer.Settings).TorrentBaseSettings.SeedRatio;
                 lidarrIndexer.Fields.FirstOrDefault(x => x.Name == "seedCriteria.seedTime").Value = ((ITorrentIndexerSettings)indexer.Settings).TorrentBaseSettings.SeedTime;
 
-                if (lidarrIndexer.Fields.FirstOrDefault(x => x.Name == "seedCriteria.discographySeedTime") != null)
+                if (lidarrIndexer.Fields.Any(x => x.Name == "seedCriteria.discographySeedTime"))
                 {
                     lidarrIndexer.Fields.FirstOrDefault(x => x.Name == "seedCriteria.discographySeedTime").Value = ((ITorrentIndexerSettings)indexer.Settings).TorrentBaseSettings.PackSeedTime ?? ((ITorrentIndexerSettings)indexer.Settings).TorrentBaseSettings.SeedTime;
+                }
+
+                if (lidarrIndexer.Fields.Any(x => x.Name == "rejectBlocklistedTorrentHashesWhileGrabbing"))
+                {
+                    lidarrIndexer.Fields.FirstOrDefault(x => x.Name == "rejectBlocklistedTorrentHashesWhileGrabbing").Value = Settings.SyncRejectBlocklistedTorrentHashesWhileGrabbing;
                 }
             }
 

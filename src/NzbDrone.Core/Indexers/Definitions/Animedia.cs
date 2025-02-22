@@ -14,17 +14,18 @@ using NzbDrone.Core.IndexerSearch.Definitions;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.Parser;
 using NzbDrone.Core.Parser.Model;
+using NzbDrone.Core.ThingiProvider;
 
 namespace NzbDrone.Core.Indexers.Definitions
 {
+    [Obsolete("Site is unusable due to a mix of HTTP errors")]
     public class Animedia : TorrentIndexerBase<NoAuthTorrentBaseSettings>
     {
         public override string Name => "Animedia";
         public override string[] IndexerUrls => new[] { "https://tt.animedia.tv/" };
-        public override string Description => "Animedia is russian anime voiceover group and eponymous anime tracker.";
+        public override string Description => "Animedia is RUSSIAN anime voiceover group and eponymous anime tracker.";
         public override string Language => "ru-RU";
         public override Encoding Encoding => Encoding.UTF8;
-        public override DownloadProtocol Protocol => DownloadProtocol.Torrent;
         public override IndexerPrivacy Privacy => IndexerPrivacy.Public;
         public override IndexerCapabilities Capabilities => SetCapabilities();
 
@@ -40,7 +41,7 @@ namespace NzbDrone.Core.Indexers.Definitions
 
         public override IParseIndexerResponse GetParser()
         {
-            return new AnimediaParser(Settings, Capabilities.Categories, RateLimit, _httpClient);
+            return new AnimediaParser(Definition, Settings, Capabilities.Categories, RateLimit, _httpClient);
         }
 
         private IndexerCapabilities SetCapabilities()
@@ -144,6 +145,7 @@ namespace NzbDrone.Core.Indexers.Definitions
 
     public class AnimediaParser : IParseIndexerResponse
     {
+        private readonly ProviderDefinition _definition;
         private readonly NoAuthTorrentBaseSettings _settings;
         private readonly IndexerCapabilitiesCategories _categories;
         private readonly TimeSpan _rateLimit;
@@ -157,8 +159,9 @@ namespace NzbDrone.Core.Indexers.Definitions
         private static readonly Regex CategorieOVARegex = new Regex(@"ОВА|OVA|ОНА|ONA|Special", RegexOptions.Compiled | RegexOptions.IgnoreCase);
         private static readonly Regex CategorieDoramaRegex = new Regex(@"Дорама", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
-        public AnimediaParser(NoAuthTorrentBaseSettings settings, IndexerCapabilitiesCategories categories, TimeSpan rateLimit, IIndexerHttpClient httpClient)
+        public AnimediaParser(ProviderDefinition definition, NoAuthTorrentBaseSettings settings, IndexerCapabilitiesCategories categories, TimeSpan rateLimit, IIndexerHttpClient httpClient)
         {
+            _definition = definition;
             _settings = settings;
             _categories = categories;
             _rateLimit = rateLimit;
@@ -253,7 +256,7 @@ namespace NzbDrone.Core.Indexers.Definitions
         {
             var torrentInfos = new List<TorrentInfo>();
             var parser = new HtmlParser();
-            var dom = parser.ParseDocument(indexerResponse.Content);
+            using var dom = parser.ParseDocument(indexerResponse.Content);
 
             foreach (var t in dom.QuerySelectorAll("ul.media__tabs__nav > li > a"))
             {
@@ -291,7 +294,7 @@ namespace NzbDrone.Core.Indexers.Definitions
             var torrentInfos = new List<ReleaseInfo>();
 
             var parser = new HtmlParser();
-            var dom = parser.ParseDocument(indexerResponse.Content);
+            using var dom = parser.ParseDocument(indexerResponse.Content);
 
             var links = dom.QuerySelectorAll("a.ads-list__item__title");
             foreach (var link in links)
@@ -311,7 +314,7 @@ namespace NzbDrone.Core.Indexers.Definitions
                     .Build();
 
                 var releaseIndexerRequest = new IndexerRequest(releaseRequest);
-                var releaseResponse = new IndexerResponse(releaseIndexerRequest, _httpClient.Execute(releaseIndexerRequest.HttpRequest));
+                var releaseResponse = new IndexerResponse(releaseIndexerRequest, _httpClient.ExecuteProxied(releaseIndexerRequest.HttpRequest, _definition));
 
                 // Throw common http errors here before we try to parse
                 if (releaseResponse.HttpResponse.HasHttpError)

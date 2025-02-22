@@ -74,6 +74,8 @@ export default {
     selectedSchema: {},
     isSaving: false,
     saveError: null,
+    isDeleting: false,
+    deleteError: null,
     isTesting: false,
     items: [],
     pendingChanges: {}
@@ -102,6 +104,7 @@ export default {
 
     [SELECT_NOTIFICATION_SCHEMA]: (state, { payload }) => {
       return selectProviderSchema(state, section, payload, (selectedSchema) => {
+        selectedSchema.name = selectedSchema.implementationName;
         selectedSchema.onGrab = selectedSchema.supportsOnGrab;
         selectedSchema.onApplicationUpdate = selectedSchema.supportsOnApplicationUpdate;
 

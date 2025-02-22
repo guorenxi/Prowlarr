@@ -25,7 +25,6 @@ public class Uniotaku : TorrentIndexerBase<UniotakuSettings>
     public override string[] IndexerUrls => new[] { "https://tracker.uniotaku.com/" };
     public override string Description => "UniOtaku is a BRAZILIAN Semi-Private Torrent Tracker for ANIME";
     public override string Language => "pt-BR";
-    public override DownloadProtocol Protocol => DownloadProtocol.Torrent;
     public override IndexerPrivacy Privacy => IndexerPrivacy.SemiPrivate;
     public override IndexerCapabilities Capabilities => SetCapabilities();
 
@@ -66,7 +65,7 @@ public class Uniotaku : TorrentIndexerBase<UniotakuSettings>
         if (CheckIfLoginNeeded(response))
         {
             var parser = new HtmlParser();
-            var dom = parser.ParseDocument(response.Content);
+            using var dom = await parser.ParseDocumentAsync(response.Content);
             var errorMessage = dom.QuerySelector(".login-content span.text-red")?.TextContent.Trim();
 
             throw new IndexerAuthException(errorMessage ?? "Unknown error message, please report.");
@@ -83,7 +82,7 @@ public class Uniotaku : TorrentIndexerBase<UniotakuSettings>
         return !httpResponse.GetCookies().ContainsKey("uid") || !httpResponse.GetCookies().ContainsKey("pass");
     }
 
-    public override async Task<byte[]> Download(Uri link)
+    public override async Task<IndexerDownloadResponse> Download(Uri link)
     {
         var request = new HttpRequestBuilder(link.ToString())
             .SetCookies(GetCookies() ?? new Dictionary<string, string>())
@@ -93,7 +92,7 @@ public class Uniotaku : TorrentIndexerBase<UniotakuSettings>
         var response = await _httpClient.ExecuteProxiedAsync(request, Definition);
 
         var parser = new HtmlParser();
-        var dom = parser.ParseDocument(response.Content);
+        using var dom = parser.ParseDocument(response.Content);
         var downloadLink = dom.QuerySelector("a[href^=\"download.php?id=\"]")?.GetAttribute("href")?.Trim();
 
         if (downloadLink == null)
@@ -138,6 +137,7 @@ public class Uniotaku : TorrentIndexerBase<UniotakuSettings>
         caps.Categories.AddCategoryMapping(55, NewznabStandardCategory.XXX, "Hentai");
         caps.Categories.AddCategoryMapping(56, NewznabStandardCategory.XXXOther, "H Doujinshi");
         caps.Categories.AddCategoryMapping(57, NewznabStandardCategory.TVOther, "Tokusatsu");
+        caps.Categories.AddCategoryMapping(58, NewznabStandardCategory.TVOther, "Live Action");
 
         return caps;
     }
@@ -251,9 +251,9 @@ public class UniotakuParser : IParseIndexerResponse
         var publishDate = DateTime.Now;
         foreach (var item in jsonContent.Value<JArray>("data"))
         {
-            var detailsDom = parser.ParseDocument(item.SelectToken("[0]").Value<string>());
-            var categoryDom = parser.ParseDocument(item.SelectToken("[1]").Value<string>());
-            var groupDom = parser.ParseDocument(item.SelectToken("[7]").Value<string>());
+            using var detailsDom = parser.ParseDocument(item.SelectToken("[0]").Value<string>());
+            using var categoryDom = parser.ParseDocument(item.SelectToken("[1]").Value<string>());
+            using var groupDom = parser.ParseDocument(item.SelectToken("[7]").Value<string>());
 
             var qTitleLink = detailsDom.QuerySelector("a[href^=\"torrents-details.php?id=\"]");
             var title = qTitleLink?.TextContent.Trim();

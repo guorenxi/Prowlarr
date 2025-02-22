@@ -11,24 +11,69 @@ import ConfirmModal from 'Components/Modal/ConfirmModal';
 import { icons, inputTypes, kinds } from 'Helpers/Props';
 import translate from 'Utilities/String/translate';
 
-export const authenticationRequiredWarning = translate('AuthenticationRequiredWarning');
-
 export const authenticationMethodOptions = [
-  { key: 'none', value: 'None', isDisabled: true },
-  { key: 'external', value: 'External', isHidden: true },
-  { key: 'basic', value: 'Basic (Browser Popup)' },
-  { key: 'forms', value: 'Forms (Login Page)' }
+  {
+    key: 'none',
+    get value() {
+      return translate('None');
+    },
+    isDisabled: true
+  },
+  {
+    key: 'external',
+    get value() {
+      return translate('External');
+    },
+    isHidden: true
+  },
+  {
+    key: 'basic',
+    get value() {
+      return translate('AuthBasic');
+    }
+  },
+  {
+    key: 'forms',
+    get value() {
+      return translate('AuthForm');
+    }
+  }
 ];
 
 export const authenticationRequiredOptions = [
-  { key: 'enabled', value: 'Enabled' },
-  { key: 'disabledForLocalAddresses', value: 'Disabled for Local Addresses' }
+  {
+    key: 'enabled',
+    get value() {
+      return translate('Enabled');
+    }
+  },
+  {
+    key: 'disabledForLocalAddresses',
+    get value() {
+      return translate('DisabledForLocalAddresses');
+    }
+  }
 ];
 
 const certificateValidationOptions = [
-  { key: 'enabled', value: 'Enabled' },
-  { key: 'disabledForLocalAddresses', value: 'Disabled for Local Addresses' },
-  { key: 'disabled', value: 'Disabled' }
+  {
+    key: 'enabled',
+    get value() {
+      return translate('Enabled');
+    }
+  },
+  {
+    key: 'disabledForLocalAddresses',
+    get value() {
+      return translate('DisabledForLocalAddresses');
+    }
+  },
+  {
+    key: 'disabled',
+    get value() {
+      return translate('Disabled');
+    }
+  }
 ];
 
 class SecuritySettings extends Component {
@@ -79,6 +124,7 @@ class SecuritySettings extends Component {
       authenticationRequired,
       username,
       password,
+      passwordConfirmation,
       apiKey,
       certificateValidation
     } = settings;
@@ -95,7 +141,7 @@ class SecuritySettings extends Component {
             name="authenticationMethod"
             values={authenticationMethodOptions}
             helpText={translate('AuthenticationMethodHelpText')}
-            helpTextWarning={authenticationRequiredWarning}
+            helpTextWarning={translate('AuthenticationRequiredWarning')}
             onChange={onInputChange}
             {...authenticationMethod}
           />
@@ -148,6 +194,21 @@ class SecuritySettings extends Component {
             null
         }
 
+        {
+          authenticationEnabled ?
+            <FormGroup>
+              <FormLabel>{translate('PasswordConfirmation')}</FormLabel>
+
+              <FormInputGroup
+                type={inputTypes.PASSWORD}
+                name="passwordConfirmation"
+                onChange={onInputChange}
+                {...passwordConfirmation}
+              />
+            </FormGroup> :
+            null
+        }
+
         <FormGroup>
           <FormLabel>{translate('ApiKey')}</FormLabel>
 
@@ -155,6 +216,7 @@ class SecuritySettings extends Component {
             type={inputTypes.TEXT}
             name="apiKey"
             readOnly={true}
+            helpTextWarning={translate('RestartRequiredHelpTextWarning')}
             buttons={[
               <ClipboardButton
                 key="copy"
@@ -196,7 +258,7 @@ class SecuritySettings extends Component {
           isOpen={this.state.isConfirmApiKeyResetModalOpen}
           kind={kinds.DANGER}
           title={translate('ResetAPIKey')}
-          message={translate('AreYouSureYouWantToResetYourAPIKey')}
+          message={translate('ResetAPIKeyMessageText')}
           confirmLabel={translate('Reset')}
           onConfirm={this.onConfirmResetApiKey}
           onCancel={this.onCloseResetApiKeyModal}

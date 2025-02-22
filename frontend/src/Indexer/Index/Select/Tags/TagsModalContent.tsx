@@ -1,6 +1,7 @@
-import { concat, uniq } from 'lodash';
+import { uniq } from 'lodash';
 import React, { useCallback, useMemo, useState } from 'react';
 import { useSelector } from 'react-redux';
+import { Tag } from 'App/State/TagsAppState';
 import Form from 'Components/Form/Form';
 import FormGroup from 'Components/Form/FormGroup';
 import FormInputGroup from 'Components/Form/FormInputGroup';
@@ -12,8 +13,10 @@ import ModalContent from 'Components/Modal/ModalContent';
 import ModalFooter from 'Components/Modal/ModalFooter';
 import ModalHeader from 'Components/Modal/ModalHeader';
 import { inputTypes, kinds, sizes } from 'Helpers/Props';
+import Indexer from 'Indexer/Indexer';
 import createAllIndexersSelector from 'Store/Selectors/createAllIndexersSelector';
 import createTagsSelector from 'Store/Selectors/createTagsSelector';
+import translate from 'Utilities/String/translate';
 import styles from './TagsModalContent.css';
 
 interface TagsModalContentProps {
@@ -25,29 +28,35 @@ interface TagsModalContentProps {
 function TagsModalContent(props: TagsModalContentProps) {
   const { indexerIds, onModalClose, onApplyTagsPress } = props;
 
-  const allIndexers = useSelector(createAllIndexersSelector());
-  const tagList = useSelector(createTagsSelector());
+  const allIndexers: Indexer[] = useSelector(createAllIndexersSelector());
+  const tagList: Tag[] = useSelector(createTagsSelector());
 
   const [tags, setTags] = useState<number[]>([]);
   const [applyTags, setApplyTags] = useState('add');
 
   const indexerTags = useMemo(() => {
-    const indexers = indexerIds.map((id) => {
-      return allIndexers.find((s) => s.id === id);
-    });
+    const tags = indexerIds.reduce((acc: number[], id) => {
+      const s = allIndexers.find((s) => s.id === id);
 
-    return uniq(concat(...indexers.map((s) => s.tags)));
+      if (s) {
+        acc.push(...s.tags);
+      }
+
+      return acc;
+    }, []);
+
+    return uniq(tags);
   }, [indexerIds, allIndexers]);
 
   const onTagsChange = useCallback(
-    ({ value }) => {
+    ({ value }: { value: number[] }) => {
       setTags(value);
     },
     [setTags]
   );
 
   const onApplyTagsChange = useCallback(
-    ({ value }) => {
+    ({ value }: { value: string }) => {
       setApplyTags(value);
     },
     [setApplyTags]
@@ -58,19 +67,19 @@ function TagsModalContent(props: TagsModalContentProps) {
   }, [tags, applyTags, onApplyTagsPress]);
 
   const applyTagsOptions = [
-    { key: 'add', value: 'Add' },
-    { key: 'remove', value: 'Remove' },
-    { key: 'replace', value: 'Replace' },
+    { key: 'add', value: translate('Add') },
+    { key: 'remove', value: translate('Remove') },
+    { key: 'replace', value: translate('Replace') },
   ];
 
   return (
     <ModalContent onModalClose={onModalClose}>
-      <ModalHeader>Tags</ModalHeader>
+      <ModalHeader>{translate('Tags')}</ModalHeader>
 
       <ModalBody>
         <Form>
           <FormGroup>
-            <FormLabel>Tags</FormLabel>
+            <FormLabel>{translate('Tags')}</FormLabel>
 
             <FormInputGroup
               type={inputTypes.TAG}
@@ -81,7 +90,7 @@ function TagsModalContent(props: TagsModalContentProps) {
           </FormGroup>
 
           <FormGroup>
-            <FormLabel>Apply Tags</FormLabel>
+            <FormLabel>{translate('ApplyTags')}</FormLabel>
 
             <FormInputGroup
               type={inputTypes.SELECT}
@@ -89,17 +98,17 @@ function TagsModalContent(props: TagsModalContentProps) {
               value={applyTags}
               values={applyTagsOptions}
               helpTexts={[
-                'How to apply tags to the selected series',
-                'Add: Add the tags the existing list of tags',
-                'Remove: Remove the entered tags',
-                'Replace: Replace the tags with the entered tags (enter no tags to clear all tags)',
+                translate('ApplyTagsHelpTextHowToApplyIndexers'),
+                translate('ApplyTagsHelpTextAdd'),
+                translate('ApplyTagsHelpTextRemove'),
+                translate('ApplyTagsHelpTextReplace'),
               ]}
               onChange={onApplyTagsChange}
             />
           </FormGroup>
 
           <FormGroup>
-            <FormLabel>Result</FormLabel>
+            <FormLabel>{translate('Result')}</FormLabel>
 
             <div className={styles.result}>
               {indexerTags.map((id) => {
@@ -116,7 +125,11 @@ function TagsModalContent(props: TagsModalContentProps) {
                 return (
                   <Label
                     key={tag.id}
-                    title={removeTag ? 'Removing tag' : 'Existing tag'}
+                    title={
+                      removeTag
+                        ? translate('RemovingTag')
+                        : translate('ExistingTag')
+                    }
                     kind={removeTag ? kinds.INVERSE : kinds.INFO}
                     size={sizes.LARGE}
                   >
@@ -140,7 +153,7 @@ function TagsModalContent(props: TagsModalContentProps) {
                   return (
                     <Label
                       key={tag.id}
-                      title={'Adding tag'}
+                      title={translate('AddingTag')}
                       kind={kinds.SUCCESS}
                       size={sizes.LARGE}
                     >
@@ -154,10 +167,10 @@ function TagsModalContent(props: TagsModalContentProps) {
       </ModalBody>
 
       <ModalFooter>
-        <Button onPress={onModalClose}>Cancel</Button>
+        <Button onPress={onModalClose}>{translate('Cancel')}</Button>
 
         <Button kind={kinds.PRIMARY} onPress={onApplyPress}>
-          Apply
+          {translate('Apply')}
         </Button>
       </ModalFooter>
     </ModalContent>

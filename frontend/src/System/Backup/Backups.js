@@ -1,5 +1,6 @@
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
+import Alert from 'Components/Alert';
 import LoadingIndicator from 'Components/Loading/LoadingIndicator';
 import PageContent from 'Components/Page/PageContent';
 import PageContentBody from 'Components/Page/PageContentBody';
@@ -8,7 +9,7 @@ import PageToolbarButton from 'Components/Page/Toolbar/PageToolbarButton';
 import PageToolbarSection from 'Components/Page/Toolbar/PageToolbarSection';
 import Table from 'Components/Table/Table';
 import TableBody from 'Components/Table/TableBody';
-import { icons } from 'Helpers/Props';
+import { icons, kinds } from 'Helpers/Props';
 import translate from 'Utilities/String/translate';
 import BackupRow from './BackupRow';
 import RestoreBackupModalConnector from './RestoreBackupModalConnector';
@@ -20,17 +21,17 @@ const columns = [
   },
   {
     name: 'name',
-    label: translate('Name'),
+    label: () => translate('Name'),
     isVisible: true
   },
   {
     name: 'size',
-    label: translate('Size'),
+    label: () => translate('Size'),
     isVisible: true
   },
   {
     name: 'time',
-    label: translate('Time'),
+    label: () => translate('Time'),
     isVisible: true
   },
   {
@@ -107,16 +108,16 @@ class Backups extends Component {
 
           {
             !isFetching && !!error &&
-              <div>
-                {translate('UnableToLoadBackups')}
-              </div>
+              <Alert kind={kinds.DANGER}>
+                {translate('BackupsLoadError')}
+              </Alert>
           }
 
           {
             noBackups &&
-              <div>
+              <Alert kind={kinds.INFO}>
                 {translate('NoBackupsAreAvailable')}
-              </div>
+              </Alert>
           }
 
           {

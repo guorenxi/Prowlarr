@@ -36,6 +36,11 @@ namespace NzbDrone.Core.Notifications.Email
             SendEmail(Settings, HEALTH_ISSUE_TITLE_BRANDED, message.Message);
         }
 
+        public override void OnHealthRestored(HealthCheck.HealthCheck previousMessage)
+        {
+            SendEmail(Settings, HEALTH_RESTORED_TITLE_BRANDED, $"The following issue is now resolved: {previousMessage.Message}");
+        }
+
         public override void OnApplicationUpdate(ApplicationUpdateMessage updateMessage)
         {
             var body = $"{updateMessage.Message}";
@@ -75,7 +80,7 @@ namespace NzbDrone.Core.Notifications.Email
 
             email.From.Add(ParseAddress("From", settings.From));
             email.To.AddRange(settings.To.Select(x => ParseAddress("To", x)));
-            email.Cc.AddRange(settings.CC.Select(x => ParseAddress("CC", x)));
+            email.Cc.AddRange(settings.Cc.Select(x => ParseAddress("CC", x)));
             email.Bcc.AddRange(settings.Bcc.Select(x => ParseAddress("BCC", x)));
 
             email.Subject = subject;
@@ -103,47 +108,42 @@ namespace NzbDrone.Core.Notifications.Email
 
         private void Send(MimeMessage email, EmailSettings settings)
         {
-            using (var client = new SmtpClient())
+            using var client = new SmtpClient();
+            client.Timeout = 10000;
+
+            var useEncyption = (EmailEncryptionType)settings.UseEncryption;
+
+            var serverOption = useEncyption switch
             {
-                client.Timeout = 10000;
+                EmailEncryptionType.Always => settings.Port == 465
+                    ? SecureSocketOptions.SslOnConnect
+                    : SecureSocketOptions.StartTls,
+                EmailEncryptionType.Never => SecureSocketOptions.None,
+                _ => SecureSocketOptions.Auto
+            };
 
-                var serverOption = SecureSocketOptions.Auto;
+            client.ServerCertificateValidationCallback = _certificateValidationService.ShouldByPassValidationError;
 
-                if (settings.RequireEncryption)
-                {
-                    if (settings.Port == 465)
-                    {
-                        serverOption = SecureSocketOptions.SslOnConnect;
-                    }
-                    else
-                    {
-                        serverOption = SecureSocketOptions.StartTls;
-                    }
-                }
+            _logger.Debug("Connecting to mail server");
 
-                client.ServerCertificateValidationCallback = _certificateValidationService.ShouldByPassValidationError;
+            client.Connect(settings.Server, settings.Port, serverOption);
 
-                _logger.Debug("Connecting to mail server");
+            if (!string.IsNullOrWhiteSpace(settings.Username))
+            {
+                _logger.Debug("Authenticating to mail server");
 
-                client.Connect(settings.Server, settings.Port, serverOption);
-
-                if (!string.IsNullOrWhiteSpace(settings.Username))
-                {
-                    _logger.Debug("Authenticating to mail server");
-
-                    client.Authenticate(settings.Username, settings.Password);
-                }
-
-                _logger.Debug("Sending to mail server");
-
-                client.Send(email);
-
-                _logger.Debug("Sent to mail server, disconnecting");
-
-                client.Disconnect(true);
-
-                _logger.Debug("Disconnecting from mail server");
+                client.Authenticate(settings.Username, settings.Password);
             }
+
+            _logger.Debug("Sending to mail server");
+
+            client.Send(email);
+
+            _logger.Debug("Sent to mail server, disconnecting");
+
+            client.Disconnect(true);
+
+            _logger.Debug("Disconnecting from mail server");
         }
 
         private MailboxAddress ParseAddress(string type, string address)

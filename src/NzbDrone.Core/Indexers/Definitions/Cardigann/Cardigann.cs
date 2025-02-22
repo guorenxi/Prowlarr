@@ -14,7 +14,7 @@ using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.ThingiProvider;
 using NzbDrone.Core.Validation;
 
-namespace NzbDrone.Core.Indexers.Cardigann
+namespace NzbDrone.Core.Indexers.Definitions.Cardigann
 {
     public class Cardigann : TorrentIndexerBase<CardigannSettings>
     {
@@ -22,10 +22,8 @@ namespace NzbDrone.Core.Indexers.Cardigann
         private readonly ICached<CardigannRequestGenerator> _generatorCache;
 
         public override string Name => "Cardigann";
-        public override string[] IndexerUrls => new string[] { "" };
+        public override string[] IndexerUrls => new[] { "" };
         public override string Description => "";
-
-        public override DownloadProtocol Protocol => DownloadProtocol.Torrent;
         public override IndexerPrivacy Privacy => IndexerPrivacy.Private;
 
         // Page size is different per indexer, setting to 1 ensures we don't break out of paging logic
@@ -60,9 +58,10 @@ namespace NzbDrone.Core.Indexers.Cardigann
                     Settings = Settings
                 });
 
-            generator = (CardigannRequestGenerator)SetCookieFunctions(generator);
-
+            generator.Definition = Definition;
             generator.Settings = Settings;
+
+            generator = (CardigannRequestGenerator)SetCookieFunctions(generator);
 
             _generatorCache.ClearExpired();
 
@@ -85,7 +84,7 @@ namespace NzbDrone.Core.Indexers.Cardigann
 
             if (_definitionService.GetCachedDefinition(Settings.DefinitionFile).Search?.Rows?.Filters?.Any(x => x.Name == "andmatch") ?? false)
             {
-                cleanReleases = FilterReleasesByQuery(releases, searchCriteria).ToList();
+                cleanReleases = FilterReleasesByQuery(cleanReleases, searchCriteria).ToList();
             }
 
             return cleanReleases;
@@ -165,7 +164,8 @@ namespace NzbDrone.Core.Indexers.Cardigann
                 SupportsRss = SupportsRss,
                 SupportsSearch = SupportsSearch,
                 SupportsRedirect = SupportsRedirect,
-                Capabilities = new IndexerCapabilities(),
+                SupportsPagination = SupportsPagination,
+                Capabilities = ParseCardigannCapabilities(definition),
                 ExtraFields = settings
             };
         }
@@ -236,6 +236,56 @@ namespace NzbDrone.Core.Indexers.Cardigann
             }
 
             return null;
+        }
+
+        private IndexerCapabilities ParseCardigannCapabilities(CardigannMetaDefinition definition)
+        {
+            var capabilities = new IndexerCapabilities();
+
+            if (definition.Caps == null)
+            {
+                return capabilities;
+            }
+
+            capabilities.ParseCardigannSearchModes(definition.Caps.Modes);
+            capabilities.SupportsRawSearch = definition.Caps.Allowrawsearch;
+
+            if (definition.Caps.Categories != null && definition.Caps.Categories.Any())
+            {
+                foreach (var category in definition.Caps.Categories)
+                {
+                    var cat = NewznabStandardCategory.GetCatByName(category.Value);
+
+                    if (cat == null)
+                    {
+                        continue;
+                    }
+
+                    capabilities.Categories.AddCategoryMapping(category.Key, cat);
+                }
+            }
+
+            if (definition.Caps.Categorymappings != null && definition.Caps.Categorymappings.Any())
+            {
+                foreach (var categoryMapping in definition.Caps.Categorymappings)
+                {
+                    IndexerCategory torznabCat = null;
+
+                    if (categoryMapping.Cat != null)
+                    {
+                        torznabCat = NewznabStandardCategory.GetCatByName(categoryMapping.Cat);
+
+                        if (torznabCat == null)
+                        {
+                            continue;
+                        }
+                    }
+
+                    capabilities.Categories.AddCategoryMapping(categoryMapping.Id, torznabCat, categoryMapping.Desc);
+                }
+            }
+
+            return capabilities;
         }
     }
 }

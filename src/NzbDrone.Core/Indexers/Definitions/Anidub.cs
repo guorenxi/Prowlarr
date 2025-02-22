@@ -18,6 +18,7 @@ using NzbDrone.Core.IndexerSearch.Definitions;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.Parser;
 using NzbDrone.Core.Parser.Model;
+using NzbDrone.Core.ThingiProvider;
 
 namespace NzbDrone.Core.Indexers.Definitions
 {
@@ -25,10 +26,9 @@ namespace NzbDrone.Core.Indexers.Definitions
     {
         public override string Name => "Anidub";
         public override string[] IndexerUrls => new[] { "https://tr.anidub.com/" };
-        public override string Description => "Anidub is russian anime voiceover group and eponymous anime tracker.";
+        public override string Description => "Anidub is RUSSIAN anime voiceover group and eponymous anime tracker.";
         public override string Language => "ru-RU";
         public override Encoding Encoding => Encoding.UTF8;
-        public override DownloadProtocol Protocol => DownloadProtocol.Torrent;
         public override IndexerPrivacy Privacy => IndexerPrivacy.SemiPrivate;
         public override IndexerCapabilities Capabilities => SetCapabilities();
 
@@ -44,7 +44,7 @@ namespace NzbDrone.Core.Indexers.Definitions
 
         public override IParseIndexerResponse GetParser()
         {
-            return new AnidubParser(Settings, Capabilities.Categories, RateLimit, _httpClient, _logger);
+            return new AnidubParser(Definition, Settings, Capabilities.Categories, RateLimit, _httpClient, _logger);
         }
 
         protected override async Task DoLogin()
@@ -78,7 +78,7 @@ namespace NzbDrone.Core.Indexers.Definitions
             else
             {
                 var parser = new HtmlParser();
-                var document = await parser.ParseDocumentAsync(response.Content);
+                using var document = await parser.ParseDocumentAsync(response.Content);
                 var errorMessage = document.QuerySelector("#content .berror .berror_c")?.TextContent.Trim();
 
                 throw new IndexerAuthException(errorMessage ?? "Unknown error message, please report.");
@@ -245,6 +245,7 @@ namespace NzbDrone.Core.Indexers.Definitions
 
     public class AnidubParser : IParseIndexerResponse
     {
+        private readonly ProviderDefinition _definition;
         private readonly UserPassTorrentBaseSettings _settings;
         private readonly IndexerCapabilitiesCategories _categories;
         private readonly TimeSpan _rateLimit;
@@ -271,8 +272,9 @@ namespace NzbDrone.Core.Indexers.Definitions
             { "/anons_ongoing", "12" }
         };
 
-        public AnidubParser(UserPassTorrentBaseSettings settings, IndexerCapabilitiesCategories categories, TimeSpan rateLimit, IIndexerHttpClient httpClient, Logger logger)
+        public AnidubParser(ProviderDefinition definition, UserPassTorrentBaseSettings settings, IndexerCapabilitiesCategories categories, TimeSpan rateLimit, IIndexerHttpClient httpClient, Logger logger)
         {
+            _definition = definition;
             _settings = settings;
             _categories = categories;
             _rateLimit = rateLimit;
@@ -434,7 +436,7 @@ namespace NzbDrone.Core.Indexers.Definitions
         {
             var torrentInfos = new List<TorrentInfo>();
             var parser = new HtmlParser();
-            var dom = parser.ParseDocument(indexerResponse.Content);
+            using var dom = parser.ParseDocument(indexerResponse.Content);
 
             foreach (var t in dom.QuerySelectorAll("#tabs .torrent_c > div"))
             {
@@ -466,7 +468,7 @@ namespace NzbDrone.Core.Indexers.Definitions
             var torrentInfos = new List<ReleaseInfo>();
 
             var parser = new HtmlParser();
-            var dom = parser.ParseDocument(indexerResponse.Content);
+            using var dom = parser.ParseDocument(indexerResponse.Content);
 
             var links = dom.QuerySelectorAll(".searchitem > h3 > a[href], #dle-content > .story > .story_h > .lcol > h2 > a[href]");
             foreach (var link in links)
@@ -480,7 +482,7 @@ namespace NzbDrone.Core.Indexers.Definitions
                     .Build();
 
                 var releaseIndexerRequest = new IndexerRequest(releaseRequest);
-                var releaseResponse = new IndexerResponse(releaseIndexerRequest, _httpClient.Execute(releaseIndexerRequest.HttpRequest));
+                var releaseResponse = new IndexerResponse(releaseIndexerRequest, _httpClient.ExecuteProxied(releaseIndexerRequest.HttpRequest, _definition));
 
                 // Throw common http errors here before we try to parse
                 if (releaseResponse.HttpResponse.HasHttpError)

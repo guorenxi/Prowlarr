@@ -18,13 +18,19 @@ public class FileListSettings : NoAuthTorrentBaseSettings
 {
     private static readonly FileListSettingsValidator Validator = new ();
 
-    [FieldDefinition(2, Label = "Username", HelpText = "Site Username", Privacy = PrivacyLevel.UserName)]
+    public FileListSettings()
+    {
+        BaseSettings.QueryLimit = 150;
+        BaseSettings.LimitsUnit = (int)IndexerLimitsUnit.Hour;
+    }
+
+    [FieldDefinition(2, Label = "Username", HelpText = "IndexerFileListSettingsUsernameHelpText", Privacy = PrivacyLevel.UserName)]
     public string Username { get; set; }
 
-    [FieldDefinition(3, Label = "Passkey", HelpText = "Site Passkey (This is the alphanumeric string in the tracker url shown in your download client)", Privacy = PrivacyLevel.Password, Type = FieldType.Password)]
+    [FieldDefinition(3, Label = "IndexerSettingsPasskey", HelpText = "IndexerFileListSettingsPasskeyHelpText", Privacy = PrivacyLevel.Password, Type = FieldType.Password)]
     public string Passkey { get; set; }
 
-    [FieldDefinition(4, Label = "Freeleech Only", HelpText = "Search Freeleech torrents only", Type = FieldType.Checkbox)]
+    [FieldDefinition(4, Label = "IndexerSettingsFreeleechOnly", HelpText = "IndexerFileListSettingsFreeleechOnlyHelpText", Type = FieldType.Checkbox)]
     public bool FreeleechOnly { get; set; }
 
     public override NzbDroneValidationResult Validate()

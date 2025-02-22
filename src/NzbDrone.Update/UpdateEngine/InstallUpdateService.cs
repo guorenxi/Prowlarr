@@ -122,9 +122,6 @@ namespace NzbDrone.Update.UpdateEngine
 
                 try
                 {
-                    _logger.Info("Emptying installation folder");
-                    _diskProvider.EmptyFolder(installationFolder);
-
                     _logger.Info("Copying new files to target folder");
                     _diskTransferService.MirrorFolder(_appFolderInfo.GetUpdatePackageFolder(), installationFolder);
 
@@ -152,7 +149,7 @@ namespace NzbDrone.Update.UpdateEngine
                     _terminateNzbDrone.Terminate(processId);
 
                     _logger.Info("Waiting for external auto-restart.");
-                    for (int i = 0; i < 10; i++)
+                    for (var i = 0; i < 10; i++)
                     {
                         System.Threading.Thread.Sleep(1000);
 

@@ -34,7 +34,6 @@ namespace NzbDrone.Core.Indexers.Definitions
         public override string Description => "ZonaQ is a SPANISH Private Torrent Tracker for MOVIES / TV";
         public override string Language => "es-ES";
         public override Encoding Encoding => Encoding.UTF8;
-        public override DownloadProtocol Protocol => DownloadProtocol.Torrent;
         public override IndexerPrivacy Privacy => IndexerPrivacy.Private;
         public override IndexerCapabilities Capabilities => SetCapabilities();
 
@@ -60,7 +59,7 @@ namespace NzbDrone.Core.Indexers.Definitions
             // The first page set the cookies and the session_id
             var loginPage = await ExecuteAuth(new HttpRequest(Login1Url));
             var parser = new HtmlParser();
-            var dom = parser.ParseDocument(loginPage.Content);
+            using var dom = parser.ParseDocument(loginPage.Content);
             var sessionId = dom.QuerySelector("input#session_id")?.GetAttribute("value");
             if (string.IsNullOrWhiteSpace(sessionId))
             {
@@ -316,7 +315,7 @@ namespace NzbDrone.Core.Indexers.Definitions
             var torrentInfos = new List<ReleaseInfo>();
 
             var parser = new HtmlParser();
-            var doc = parser.ParseDocument(indexerResponse.Content);
+            using var doc = parser.ParseDocument(indexerResponse.Content);
 
             var rows = doc.QuerySelectorAll("table.torrent_list > tbody > tr");
 

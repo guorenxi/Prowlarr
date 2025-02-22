@@ -9,8 +9,8 @@ using NUnit.Framework;
 using NzbDrone.Common.Http;
 using NzbDrone.Core.Indexers;
 using NzbDrone.Core.Indexers.Definitions;
-using NzbDrone.Core.Indexers.Definitions.Gazelle;
 using NzbDrone.Core.IndexerSearch.Definitions;
+using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.Test.Framework;
 
 namespace NzbDrone.Core.Test.IndexerTests.OrpheusTests
@@ -21,7 +21,7 @@ namespace NzbDrone.Core.Test.IndexerTests.OrpheusTests
         [SetUp]
         public void Setup()
         {
-            Subject.Definition = new IndexerDefinition()
+            Subject.Definition = new IndexerDefinition
             {
                 Name = "Orpheus",
                 Settings = new OrpheusSettings { Apikey = "somekey" }
@@ -37,14 +37,14 @@ namespace NzbDrone.Core.Test.IndexerTests.OrpheusTests
                 .Setup(o => o.ExecuteProxiedAsync(It.Is<HttpRequest>(v => v.Method == HttpMethod.Get), Subject.Definition))
                 .Returns<HttpRequest, IndexerDefinition>((r, d) => Task.FromResult(new HttpResponse(r, new HttpHeader { { "Content-Type", "application/json" } }, new CookieCollection(), recentFeed)));
 
-            var releases = (await Subject.Fetch(new BasicSearchCriteria { Categories = new[] { 2000 } })).Releases;
+            var releases = (await Subject.Fetch(new BasicSearchCriteria { Categories = new[] { 3000 } })).Releases;
 
-            releases.Should().HaveCount(65);
-            releases.First().Should().BeOfType<GazelleInfo>();
+            releases.Should().HaveCount(50);
+            releases.First().Should().BeOfType<TorrentInfo>();
 
-            var torrentInfo = releases.First() as GazelleInfo;
+            var torrentInfo = releases.First() as TorrentInfo;
 
-            torrentInfo.Title.Should().Be("The Beatles - Abbey Road [1969] [Album] [2.0 Mix 2019] [MP3 V2 (VBR)] [BD]");
+            torrentInfo.Title.Should().Be("The Beatles - Abbey Road (1969) [Album] [2.0 Mix 2019] [MP3 V2 (VBR) / BD]");
             torrentInfo.DownloadProtocol.Should().Be(DownloadProtocol.Torrent);
             torrentInfo.DownloadUrl.Should().Be("https://orpheus.network/ajax.php?action=download&id=1902448");
             torrentInfo.InfoUrl.Should().Be("https://orpheus.network/torrents.php?id=466&torrentid=1902448");
@@ -56,6 +56,7 @@ namespace NzbDrone.Core.Test.IndexerTests.OrpheusTests
             torrentInfo.MagnetUrl.Should().Be(null);
             torrentInfo.Peers.Should().Be(0);
             torrentInfo.Seeders.Should().Be(0);
+            torrentInfo.Files.Should().Be(18);
             torrentInfo.ImdbId.Should().Be(0);
             torrentInfo.TmdbId.Should().Be(0);
             torrentInfo.TvdbId.Should().Be(0);

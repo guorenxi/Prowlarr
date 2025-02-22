@@ -26,7 +26,6 @@ namespace NzbDrone.Core.Indexers.Definitions
         public override string Description => "Toloka.to is a Semi-Private Ukrainian torrent site with a thriving file-sharing community";
         public override string Language => "uk-UA";
         public override Encoding Encoding => Encoding.UTF8;
-        public override DownloadProtocol Protocol => DownloadProtocol.Torrent;
         public override IndexerPrivacy Privacy => IndexerPrivacy.SemiPrivate;
         public override IndexerCapabilities Capabilities => SetCapabilities();
 
@@ -75,7 +74,7 @@ namespace NzbDrone.Core.Indexers.Definitions
             if (CheckIfLoginNeeded(response))
             {
                 var parser = new HtmlParser();
-                var dom = parser.ParseDocument(response.Content);
+                using var dom = await parser.ParseDocumentAsync(response.Content);
                 var errorMessage = dom.QuerySelector("table.forumline table span.gen")?.FirstChild?.TextContent;
 
                 throw new IndexerAuthException(errorMessage ?? "Unknown error message, please report.");
@@ -111,7 +110,8 @@ namespace NzbDrone.Core.Indexers.Definitions
                 BookSearchParams = new List<BookSearchParam>
                 {
                     BookSearchParam.Q
-                }
+                },
+                SupportsRawSearch = true
             };
 
             caps.Categories.AddCategoryMapping("117", NewznabStandardCategory.Movies, "Українське кіно");
@@ -323,6 +323,11 @@ namespace NzbDrone.Core.Indexers.Definitions
                 { "nm", term.IsNotNullOrWhiteSpace() ? term.Replace("-", " ") : "" }
             };
 
+            if (_settings.FreeleechOnly)
+            {
+                parameters.Add("sds", "1");
+            }
+
             var queryCats = _capabilities.Categories.MapTorznabCapsToTrackers(categories);
             if (queryCats.Any())
             {
@@ -363,7 +368,7 @@ namespace NzbDrone.Core.Indexers.Definitions
             var releaseInfos = new List<ReleaseInfo>();
 
             var parser = new HtmlParser();
-            var dom = parser.ParseDocument(indexerResponse.Content);
+            using var dom = parser.ParseDocument(indexerResponse.Content);
 
             var rows = dom.QuerySelectorAll("table.forumline > tbody > tr[class*=prow]");
             foreach (var row in rows)
@@ -407,6 +412,19 @@ namespace NzbDrone.Core.Indexers.Definitions
                     MinimumRatio = 1,
                     MinimumSeedTime = 0
                 };
+
+                if (row.QuerySelector("img[src=\"images/gold.gif\"], img[src=\"images/authors.gif\"]") != null)
+                {
+                    release.DownloadVolumeFactor = 0;
+                }
+                else if (row.QuerySelector("img[src=\"images/silver.gif\"]") != null)
+                {
+                    release.DownloadVolumeFactor = 0.5;
+                }
+                else if (row.QuerySelector("img[src=\"images/bronze.gif\"]") != null)
+                {
+                    release.DownloadVolumeFactor = 0.75;
+                }
 
                 releaseInfos.Add(release);
             }
@@ -540,7 +558,10 @@ namespace NzbDrone.Core.Indexers.Definitions
             StripCyrillicLetters = true;
         }
 
-        [FieldDefinition(4, Label = "Strip Cyrillic Letters", Type = FieldType.Checkbox)]
+        [FieldDefinition(4, Label = "Freeleech Only", HelpText = "Search Freeleech torrents only", Type = FieldType.Checkbox)]
+        public bool FreeleechOnly { get; set; }
+
+        [FieldDefinition(5, Label = "Strip Cyrillic Letters", Type = FieldType.Checkbox)]
         public bool StripCyrillicLetters { get; set; }
     }
 }

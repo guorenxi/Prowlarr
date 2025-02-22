@@ -31,8 +31,8 @@ public class Libble : TorrentIndexerBase<LibbleSettings>
     private string LoginUrl => Settings.BaseUrl + "login.php";
     public override string Language => "en-US";
     public override Encoding Encoding => Encoding.UTF8;
-    public override DownloadProtocol Protocol => DownloadProtocol.Torrent;
     public override IndexerPrivacy Privacy => IndexerPrivacy.Private;
+    public override bool SupportsPagination => true;
     public override int PageSize => 50;
     public override IndexerCapabilities Capabilities => SetCapabilities();
 
@@ -77,7 +77,7 @@ public class Libble : TorrentIndexerBase<LibbleSettings>
         if (CheckIfLoginNeeded(response))
         {
             var parser = new HtmlParser();
-            var dom = parser.ParseDocument(response.Content);
+            using var dom = parser.ParseDocument(response.Content);
             var errorMessage = dom.QuerySelector("#loginform > .warning")?.TextContent.Trim();
 
             throw new IndexerAuthException(errorMessage ?? "Unknown error message, please report.");
@@ -206,7 +206,7 @@ public class LibbleRequestGenerator : IIndexerRequestGenerator
             queryCats.ForEach(cat => parameters.Set($"filter_cat[{cat}]", "1"));
         }
 
-        if (searchCriteria.Offset.HasValue && searchCriteria.Limit.HasValue && searchCriteria.Offset > 0 && searchCriteria.Limit > 0)
+        if (searchCriteria.Limit is > 0 && searchCriteria.Offset is > 0)
         {
             var page = (int)(searchCriteria.Offset / searchCriteria.Limit) + 1;
             parameters.Set("page", page.ToString());
@@ -238,7 +238,7 @@ public class LibbleParser : IParseIndexerResponse
         var releaseInfos = new List<ReleaseInfo>();
 
         var parser = new HtmlParser();
-        var doc = parser.ParseDocument(indexerResponse.Content);
+        using var doc = parser.ParseDocument(indexerResponse.Content);
 
         var groups = doc.QuerySelectorAll("table#torrent_table > tbody > tr.group:has(strong > a[href*=\"torrents.php?id=\"])");
         foreach (var group in groups)

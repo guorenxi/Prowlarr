@@ -8,6 +8,7 @@ using FluentValidation;
 using NLog;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Http;
+using NzbDrone.Common.Serializer;
 using NzbDrone.Core.Annotations;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Indexers.Definitions.Gazelle;
@@ -26,10 +27,10 @@ namespace NzbDrone.Core.Indexers.Definitions
         public override string Name => "Orpheus";
         public override string[] IndexerUrls => new[] { "https://orpheus.network/" };
         public override string Description => "Orpheus (APOLLO) is a Private Torrent Tracker for MUSIC";
-        public override DownloadProtocol Protocol => DownloadProtocol.Torrent;
         public override IndexerPrivacy Privacy => IndexerPrivacy.Private;
         public override IndexerCapabilities Capabilities => SetCapabilities();
         public override bool SupportsRedirect => true;
+        public override TimeSpan RateLimit => TimeSpan.FromSeconds(3);
 
         public Orpheus(IIndexerHttpClient httpClient,
                        IEventAggregator eventAggregator,
@@ -50,10 +51,38 @@ namespace NzbDrone.Core.Indexers.Definitions
             return new OrpheusParser(Settings, Capabilities.Categories);
         }
 
+        protected override Task<HttpRequest> GetDownloadRequest(Uri link)
+        {
+            var requestBuilder = new HttpRequestBuilder(link.AbsoluteUri)
+            {
+                AllowAutoRedirect = FollowRedirect
+            };
+
+            var request = requestBuilder
+                .SetHeader("Authorization", $"token {Settings.Apikey}")
+                .Build();
+
+            return Task.FromResult(request);
+        }
+
+        protected override IList<ReleaseInfo> CleanupReleases(IEnumerable<ReleaseInfo> releases, SearchCriteriaBase searchCriteria)
+        {
+            var cleanReleases = base.CleanupReleases(releases, searchCriteria);
+
+            if (searchCriteria.IsRssSearch)
+            {
+                cleanReleases = cleanReleases.Take(50).ToList();
+            }
+
+            return cleanReleases;
+        }
+
         private IndexerCapabilities SetCapabilities()
         {
             var caps = new IndexerCapabilities
             {
+                LimitsDefault = 50,
+                LimitsMax = 50,
                 MusicSearchParams = new List<MusicSearchParam>
                 {
                     MusicSearchParam.Q, MusicSearchParam.Artist, MusicSearchParam.Album, MusicSearchParam.Year
@@ -75,46 +104,30 @@ namespace NzbDrone.Core.Indexers.Definitions
             return caps;
         }
 
-        public override async Task<byte[]> Download(Uri link)
+        public override async Task<IndexerDownloadResponse> Download(Uri link)
         {
-            var request = new HttpRequestBuilder(link.AbsoluteUri)
-                .SetHeader("Authorization", $"token {Settings.Apikey}")
-                .Build();
+            var downloadResponse = await base.Download(link);
 
-            var downloadBytes = Array.Empty<byte>();
+            var fileData = downloadResponse.Data;
 
-            try
+            if (Settings.UseFreeleechToken == (int)OrpheusFreeleechTokenAction.Preferred
+                && fileData.Length >= 1
+                && fileData[0] != 'd' // simple test for torrent vs HTML content
+                && link.Query.Contains("usetoken=1"))
             {
-                var response = await _httpClient.ExecuteProxiedAsync(request, Definition);
-                downloadBytes = response.ResponseData;
+                var html = Encoding.GetString(fileData);
 
-                if (downloadBytes.Length >= 1
-                    && downloadBytes[0] != 'd' // simple test for torrent vs HTML content
-                    && link.Query.Contains("usetoken=1"))
+                if (html.Contains("You do not have any freeleech tokens left.")
+                    || html.Contains("You do not have enough freeleech tokens")
+                    || html.Contains("This torrent is too large.")
+                    || html.Contains("You cannot use tokens here"))
                 {
-                    var html = Encoding.GetString(downloadBytes);
-                    if (html.Contains("You do not have any freeleech tokens left.")
-                        || html.Contains("You do not have enough freeleech tokens")
-                        || html.Contains("This torrent is too large.")
-                        || html.Contains("You cannot use tokens here"))
-                    {
-                        // download again without usetoken
-                        request.Url = new HttpUri(link.ToString().Replace("&usetoken=1", ""));
-
-                        response = await _httpClient.ExecuteProxiedAsync(request, Definition);
-                        downloadBytes = response.ResponseData;
-                    }
+                    // Try to download again without usetoken
+                    downloadResponse = await base.Download(link.RemoveQueryParam("usetoken"));
                 }
             }
-            catch (Exception)
-            {
-                _indexerStatusService.RecordFailure(Definition.Id);
-                _logger.Error("Download failed");
-            }
 
-            ValidateDownloadData(downloadBytes);
-
-            return downloadBytes;
+            return downloadResponse;
         }
     }
 
@@ -201,6 +214,7 @@ namespace NzbDrone.Core.Indexers.Definitions
             }
 
             var queryCats = _capabilities.Categories.MapTorznabCapsToTrackers(searchCriteria.Categories);
+
             if (queryCats.Any())
             {
                 queryCats.ForEach(cat => parameters.Set($"filter_cat[{cat}]", "1"));
@@ -239,12 +253,14 @@ namespace NzbDrone.Core.Indexers.Definitions
 
             if (indexerResponse.HttpResponse.StatusCode != HttpStatusCode.OK)
             {
-                throw new IndexerException(indexerResponse, $"Unexpected response status {indexerResponse.HttpResponse.StatusCode} code from API request");
+                STJson.TryDeserialize<GazelleErrorResponse>(indexerResponse.Content, out var errorResponse);
+
+                throw new IndexerException(indexerResponse, $"Unexpected response status {indexerResponse.HttpResponse.StatusCode} code from indexer request: {errorResponse?.Error ?? "Check the logs for more information."}");
             }
 
             if (!indexerResponse.HttpResponse.Headers.ContentType.Contains(HttpAccept.Json.Value))
             {
-                throw new IndexerException(indexerResponse, $"Unexpected response header {indexerResponse.HttpResponse.Headers.ContentType} from API request, expected {HttpAccept.Json.Value}");
+                throw new IndexerException(indexerResponse, $"Unexpected response header {indexerResponse.HttpResponse.Headers.ContentType} from indexer request, expected {HttpAccept.Json.Value}");
             }
 
             var jsonResponse = new HttpResponse<GazelleResponse>(indexerResponse.HttpResponse);
@@ -261,19 +277,27 @@ namespace NzbDrone.Core.Indexers.Definitions
                 {
                     foreach (var torrent in result.Torrents)
                     {
+                        // skip releases that cannot be used with freeleech tokens when the option is enabled
+                        if (_settings.UseFreeleechToken == (int)OrpheusFreeleechTokenAction.Required && !torrent.CanUseToken)
+                        {
+                            continue;
+                        }
+
                         var id = torrent.TorrentId;
 
                         var title = GetTitle(result, torrent);
                         var infoUrl = GetInfoUrl(result.GroupId, id);
+                        var isFreeLeech = torrent.IsFreeLeech || torrent.IsNeutralLeech || torrent.IsPersonalFreeLeech;
 
-                        var release = new GazelleInfo
+                        var release = new TorrentInfo
                         {
                             Guid = infoUrl,
                             InfoUrl = infoUrl,
-                            DownloadUrl = GetDownloadUrl(id, torrent.CanUseToken),
+                            DownloadUrl = GetDownloadUrl(id, torrent.CanUseToken && !isFreeLeech),
                             Title = WebUtility.HtmlDecode(title),
                             Artist = WebUtility.HtmlDecode(result.Artist),
                             Album = WebUtility.HtmlDecode(result.GroupName),
+                            Year = int.Parse(result.GroupYear),
                             Container = torrent.Encoding,
                             Codec = torrent.Format,
                             Size = long.Parse(torrent.Size),
@@ -281,10 +305,9 @@ namespace NzbDrone.Core.Indexers.Definitions
                             Peers = int.Parse(torrent.Leechers) + int.Parse(torrent.Seeders),
                             PublishDate = torrent.Time.ToUniversalTime(),
                             Scene = torrent.Scene,
-                            Freeleech = torrent.IsFreeLeech || torrent.IsPersonalFreeLeech,
                             Files = torrent.FileCount,
                             Grabs = torrent.Snatches,
-                            DownloadVolumeFactor = torrent.IsFreeLeech || torrent.IsNeutralLeech || torrent.IsPersonalFreeLeech ? 0 : 1,
+                            DownloadVolumeFactor = isFreeLeech ? 0 : 1,
                             UploadVolumeFactor = torrent.IsNeutralLeech ? 0 : 1
                         };
 
@@ -305,23 +328,29 @@ namespace NzbDrone.Core.Indexers.Definitions
                 // Non-Audio files are formatted a little differently (1:1 for group and torrents)
                 else
                 {
+                    // skip releases that cannot be used with freeleech tokens when the option is enabled
+                    if (_settings.UseFreeleechToken == (int)OrpheusFreeleechTokenAction.Required && !result.CanUseToken)
+                    {
+                        continue;
+                    }
+
                     var id = result.TorrentId;
                     var infoUrl = GetInfoUrl(result.GroupId, id);
+                    var isFreeLeech = result.IsFreeLeech || result.IsNeutralLeech || result.IsPersonalFreeLeech;
 
-                    var release = new GazelleInfo
+                    var release = new TorrentInfo
                     {
                         Guid = infoUrl,
+                        InfoUrl = infoUrl,
+                        DownloadUrl = GetDownloadUrl(id, result.CanUseToken && !isFreeLeech),
                         Title = WebUtility.HtmlDecode(result.GroupName),
                         Size = long.Parse(result.Size),
-                        DownloadUrl = GetDownloadUrl(id, result.CanUseToken),
-                        InfoUrl = infoUrl,
                         Seeders = int.Parse(result.Seeders),
                         Peers = int.Parse(result.Leechers) + int.Parse(result.Seeders),
                         PublishDate = long.TryParse(result.GroupTime, out var num) ? DateTimeOffset.FromUnixTimeSeconds(num).UtcDateTime : DateTimeUtil.FromFuzzyTime(result.GroupTime),
-                        Freeleech = result.IsFreeLeech || result.IsPersonalFreeLeech,
                         Files = result.FileCount,
                         Grabs = result.Snatches,
-                        DownloadVolumeFactor = result.IsFreeLeech || result.IsNeutralLeech || result.IsPersonalFreeLeech ? 0 : 1,
+                        DownloadVolumeFactor = isFreeLeech ? 0 : 1,
                         UploadVolumeFactor = result.IsNeutralLeech ? 0 : 1
                     };
 
@@ -348,7 +377,7 @@ namespace NzbDrone.Core.Indexers.Definitions
 
         private string GetTitle(GazelleRelease result, GazelleTorrent torrent)
         {
-            var title = $"{result.Artist} - {result.GroupName} [{result.GroupYear}]";
+            var title = $"{result.Artist} - {result.GroupName} ({result.GroupYear})";
 
             if (result.ReleaseType.IsNotNullOrWhiteSpace() && result.ReleaseType != "Unknown")
             {
@@ -360,27 +389,34 @@ namespace NzbDrone.Core.Indexers.Definitions
                 title += $" [{$"{torrent.RemasterTitle} {torrent.RemasterYear}".Trim()}]";
             }
 
-            title += $" [{torrent.Format} {torrent.Encoding}] [{torrent.Media}]";
+            var flags = new List<string>
+            {
+                $"{torrent.Format} {torrent.Encoding}",
+                $"{torrent.Media}"
+            };
+
+            if (torrent.HasLog)
+            {
+                flags.Add("Log (" + torrent.LogScore + "%)");
+            }
 
             if (torrent.HasCue)
             {
-                title += " [Cue]";
+                flags.Add("Cue");
             }
 
-            return title;
+            return $"{title} [{string.Join(" / ", flags)}]";
         }
 
         private string GetDownloadUrl(int torrentId, bool canUseToken)
         {
-            // AuthKey is required but not checked, just pass in a dummy variable
-            // to avoid having to track authkey, which is randomly cycled
             var url = new HttpUri(_settings.BaseUrl)
                 .CombinePath("/ajax.php")
                 .AddQueryParam("action", "download")
                 .AddQueryParam("id", torrentId);
 
             // Orpheus fails to download if usetoken=0 so we need to only add if we will use one
-            if (_settings.UseFreeleechToken)
+            if (_settings.UseFreeleechToken is (int)OrpheusFreeleechTokenAction.Preferred or (int)OrpheusFreeleechTokenAction.Required && canUseToken)
             {
                 url = url.AddQueryParam("usetoken", "1");
             }
@@ -414,18 +450,30 @@ namespace NzbDrone.Core.Indexers.Definitions
         public OrpheusSettings()
         {
             Apikey = "";
-            UseFreeleechToken = false;
+            UseFreeleechToken = (int)OrpheusFreeleechTokenAction.Never;
         }
 
-        [FieldDefinition(2, Label = "API Key", HelpText = "API Key from the Site (Found in Settings => Access Settings)", Privacy = PrivacyLevel.ApiKey)]
+        [FieldDefinition(2, Label = "ApiKey", HelpText = "IndexerOrpheusSettingsApiKeyHelpText", Privacy = PrivacyLevel.ApiKey)]
         public string Apikey { get; set; }
 
-        [FieldDefinition(3, Label = "Use Freeleech Tokens", HelpText = "Use freeleech tokens when available", Type = FieldType.Checkbox)]
-        public bool UseFreeleechToken { get; set; }
+        [FieldDefinition(3, Type = FieldType.Select, Label = "Use Freeleech Tokens", SelectOptions = typeof(OrpheusFreeleechTokenAction), HelpText = "When to use freeleech tokens")]
+        public int UseFreeleechToken { get; set; }
 
         public override NzbDroneValidationResult Validate()
         {
             return new NzbDroneValidationResult(Validator.Validate(this));
         }
+    }
+
+    public enum OrpheusFreeleechTokenAction
+    {
+        [FieldOption(Label = "Never", Hint = "Do not use tokens")]
+        Never = 0,
+
+        [FieldOption(Label = "Preferred", Hint = "Use token if possible")]
+        Preferred = 1,
+
+        [FieldOption(Label = "Required", Hint = "Abort download if unable to use token")]
+        Required = 2,
     }
 }

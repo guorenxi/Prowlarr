@@ -1,3 +1,4 @@
+using System;
 using System.Linq;
 using System.Text.RegularExpressions;
 using FluentValidation;
@@ -10,19 +11,11 @@ namespace NzbDrone.Core.Indexers.Torznab
 {
     public class TorznabSettingsValidator : AbstractValidator<TorznabSettings>
     {
-        private static readonly string[] ApiKeyWhiteList =
-        {
-            "hd4free.xyz",
-        };
+        private static readonly string[] ApiKeyWhiteList = Array.Empty<string>();
 
         private static bool ShouldHaveApiKey(TorznabSettings settings)
         {
-            if (settings.BaseUrl == null)
-            {
-                return false;
-            }
-
-            return ApiKeyWhiteList.Any(c => settings.BaseUrl.ToLowerInvariant().Contains(c));
+            return settings.BaseUrl != null && ApiKeyWhiteList.Any(c => settings.BaseUrl.ToLowerInvariant().Contains(c));
         }
 
         private static readonly Regex AdditionalParametersRegex = new Regex(@"(&.+?\=.+?)+", RegexOptions.Compiled);

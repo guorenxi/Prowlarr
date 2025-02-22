@@ -13,10 +13,11 @@ namespace NzbDrone.Core.Indexers.Newznab
     public class NewznabRequestGenerator : IIndexerRequestGenerator
     {
         private readonly INewznabCapabilitiesProvider _capabilitiesProvider;
+
+        public ProviderDefinition Definition { get; set; }
         public int MaxPages { get; set; }
         public int PageSize { get; set; }
         public NewznabSettings Settings { get; set; }
-        public ProviderDefinition Definition { get; set; }
 
         public NewznabRequestGenerator(INewznabCapabilitiesProvider capabilitiesProvider)
         {
@@ -127,9 +128,9 @@ namespace NzbDrone.Core.Indexers.Newznab
                 parameters.Set("tvdbid", searchCriteria.TvdbId.Value.ToString());
             }
 
-            if (searchCriteria.TmdbId.HasValue && capabilities.TvSearchTvdbAvailable)
+            if (searchCriteria.TmdbId.HasValue && capabilities.TvSearchTmdbAvailable)
             {
-                parameters.Set("tmdbid", searchCriteria.TvdbId.Value.ToString());
+                parameters.Set("tmdbid", searchCriteria.TmdbId.Value.ToString());
             }
 
             if (searchCriteria.ImdbId.IsNotNullOrWhiteSpace() && capabilities.TvSearchImdbAvailable)
@@ -270,6 +271,26 @@ namespace NzbDrone.Core.Indexers.Newznab
             if (searchCriteria.Offset.HasValue)
             {
                 parameters.Set("offset", searchCriteria.Offset.ToString());
+            }
+
+            if (searchCriteria.MinAge.HasValue)
+            {
+                parameters.Set("minage", searchCriteria.MaxAge.ToString());
+            }
+
+            if (searchCriteria.MaxAge.HasValue)
+            {
+                parameters.Set("maxage", searchCriteria.MaxAge.ToString());
+            }
+
+            if (searchCriteria.MinSize.HasValue)
+            {
+                parameters.Set("minsize", searchCriteria.MaxAge.ToString());
+            }
+
+            if (searchCriteria.MaxSize.HasValue)
+            {
+                parameters.Set("maxsize", searchCriteria.MaxAge.ToString());
             }
 
             if (parameters.Count > 0)

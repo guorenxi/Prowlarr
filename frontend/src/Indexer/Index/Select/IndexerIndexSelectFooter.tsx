@@ -1,11 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { createSelector } from 'reselect';
-import { SelectActionType, useSelect } from 'App/SelectContext';
+import { useSelect } from 'App/SelectContext';
+import AppState from 'App/State/AppState';
 import SpinnerButton from 'Components/Link/SpinnerButton';
 import PageContentFooter from 'Components/Page/PageContentFooter';
+import usePrevious from 'Helpers/Hooks/usePrevious';
 import { kinds } from 'Helpers/Props';
-import { saveIndexerEditor } from 'Store/Actions/indexerIndexActions';
+import { bulkEditIndexers } from 'Store/Actions/indexerActions';
 import translate from 'Utilities/String/translate';
 import getSelectedIds from 'Utilities/Table/getSelectedIds';
 import DeleteIndexerModal from './Delete/DeleteIndexerModal';
@@ -13,8 +15,18 @@ import EditIndexerModal from './Edit/EditIndexerModal';
 import TagsModal from './Tags/TagsModal';
 import styles from './IndexerIndexSelectFooter.css';
 
-const seriesEditorSelector = createSelector(
-  (state) => state.indexers,
+interface SavePayload {
+  enable?: boolean;
+  appProfileId?: number;
+  priority?: number;
+  minimumSeeders?: number;
+  seedRatio?: number;
+  seedTime?: number;
+  packSeedTime?: number;
+}
+
+const indexersEditorSelector = createSelector(
+  (state: AppState) => state.indexers,
   (indexers) => {
     const { isSaving, isDeleting, deleteError } = indexers;
 
@@ -27,8 +39,9 @@ const seriesEditorSelector = createSelector(
 );
 
 function IndexerIndexSelectFooter() {
-  const { isSaving, isDeleting, deleteError } =
-    useSelector(seriesEditorSelector);
+  const { isSaving, isDeleting, deleteError } = useSelector(
+    indexersEditorSelector
+  );
 
   const dispatch = useDispatch();
 
@@ -37,6 +50,7 @@ function IndexerIndexSelectFooter() {
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [isSavingIndexer, setIsSavingIndexer] = useState(false);
   const [isSavingTags, setIsSavingTags] = useState(false);
+  const previousIsDeleting = usePrevious(isDeleting);
 
   const [selectState, selectDispatch] = useSelect();
   const { selectedState } = selectState;
@@ -56,14 +70,14 @@ function IndexerIndexSelectFooter() {
   }, [setIsEditModalOpen]);
 
   const onSavePress = useCallback(
-    (payload) => {
+    (payload: SavePayload) => {
       setIsSavingIndexer(true);
       setIsEditModalOpen(false);
 
       dispatch(
-        saveIndexerEditor({
+        bulkEditIndexers({
           ...payload,
-          indexerIds,
+          ids: indexerIds,
         })
       );
     },
@@ -79,13 +93,13 @@ function IndexerIndexSelectFooter() {
   }, [setIsTagsModalOpen]);
 
   const onApplyTagsPress = useCallback(
-    (tags, applyTags) => {
+    (tags: number[], applyTags: string) => {
       setIsSavingTags(true);
       setIsTagsModalOpen(false);
 
       dispatch(
-        saveIndexerEditor({
-          indexerIds,
+        bulkEditIndexers({
+          ids: indexerIds,
           tags,
           applyTags,
         })
@@ -110,10 +124,10 @@ function IndexerIndexSelectFooter() {
   }, [isSaving]);
 
   useEffect(() => {
-    if (!isDeleting && !deleteError) {
-      selectDispatch({ type: SelectActionType.UnselectAll });
+    if (previousIsDeleting && !isDeleting && !deleteError) {
+      selectDispatch({ type: 'unselectAll' });
     }
-  }, [isDeleting, deleteError, selectDispatch]);
+  }, [previousIsDeleting, isDeleting, deleteError, selectDispatch]);
 
   const anySelected = selectedCount > 0;
 
@@ -134,7 +148,7 @@ function IndexerIndexSelectFooter() {
             isDisabled={!anySelected}
             onPress={onTagsPress}
           >
-            {translate('Set Tags')}
+            {translate('SetTags')}
           </SpinnerButton>
         </div>
 
@@ -151,7 +165,7 @@ function IndexerIndexSelectFooter() {
       </div>
 
       <div className={styles.selected}>
-        {translate('{0} indexers selected', selectedCount.toString())}
+        {translate('CountIndexersSelected', { count: selectedCount })}
       </div>
 
       <EditIndexerModal

@@ -9,6 +9,7 @@ using AngleSharp.Html.Parser;
 using NLog;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Http;
+using NzbDrone.Core.Annotations;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Indexers.Exceptions;
 using NzbDrone.Core.Indexers.Settings;
@@ -19,12 +20,11 @@ using NzbDrone.Core.Parser.Model;
 
 namespace NzbDrone.Core.Indexers.Definitions;
 
-public class XSpeeds : TorrentIndexerBase<UserPassTorrentBaseSettings>
+public class XSpeeds : TorrentIndexerBase<XSpeedsSettings>
 {
     public override string Name => "XSpeeds";
     public override string[] IndexerUrls => new[] { "https://www.xspeeds.eu/" };
     public override string Description => "XSpeeds (XS) is a Private Torrent Tracker for MOVIES / TV / GENERAL";
-    public override DownloadProtocol Protocol => DownloadProtocol.Torrent;
     public override IndexerPrivacy Privacy => IndexerPrivacy.Private;
     public override IndexerCapabilities Capabilities => SetCapabilities();
     private string LandingUrl => Settings.BaseUrl + "login.php";
@@ -46,7 +46,7 @@ public class XSpeeds : TorrentIndexerBase<UserPassTorrentBaseSettings>
 
     public override IParseIndexerResponse GetParser()
     {
-        return new XSpeedsParser(Capabilities.Categories);
+        return new XSpeedsParser(Settings, Capabilities.Categories);
     }
 
     protected override async Task DoLogin()
@@ -73,7 +73,7 @@ public class XSpeeds : TorrentIndexerBase<UserPassTorrentBaseSettings>
         if (CheckIfLoginNeeded(response))
         {
             var parser = new HtmlParser();
-            var dom = parser.ParseDocument(response.Content);
+            using var dom = await parser.ParseDocumentAsync(response.Content);
             var errorMessage = dom.QuerySelector(".left_side table:nth-of-type(1) tr:nth-of-type(2)")?.TextContent.Trim().Replace("\n\t", " ");
             if (errorMessage.IsNullOrWhiteSpace())
             {
@@ -116,47 +116,77 @@ public class XSpeeds : TorrentIndexerBase<UserPassTorrentBaseSettings>
             }
         };
 
-        caps.Categories.AddCategoryMapping(92, NewznabStandardCategory.MoviesUHD, "4K Movies");
-        caps.Categories.AddCategoryMapping(91, NewznabStandardCategory.TVUHD, "4K TV");
-        caps.Categories.AddCategoryMapping(94, NewznabStandardCategory.TVUHD, "4K TV Boxsets");
         caps.Categories.AddCategoryMapping(70, NewznabStandardCategory.TVAnime, "Anime");
-        caps.Categories.AddCategoryMapping(80, NewznabStandardCategory.AudioAudiobook, "Audiobooks");
-        caps.Categories.AddCategoryMapping(66, NewznabStandardCategory.MoviesBluRay, "Blu-Ray");
-        caps.Categories.AddCategoryMapping(48, NewznabStandardCategory.Books, "Books Magazines");
+        caps.Categories.AddCategoryMapping(113, NewznabStandardCategory.TVAnime, "Anime Boxsets");
+        caps.Categories.AddCategoryMapping(112, NewznabStandardCategory.MoviesOther, "Anime Movies");
+        caps.Categories.AddCategoryMapping(111, NewznabStandardCategory.MoviesOther, "Anime TV");
+        caps.Categories.AddCategoryMapping(150, NewznabStandardCategory.PC, "Apps");
+        caps.Categories.AddCategoryMapping(156, NewznabStandardCategory.TV, "AV1");
+        caps.Categories.AddCategoryMapping(156, NewznabStandardCategory.Movies, "AV1");
+        caps.Categories.AddCategoryMapping(159, NewznabStandardCategory.Movies, "Movie Boxsets AV1");
+        caps.Categories.AddCategoryMapping(158, NewznabStandardCategory.Movies, "Movies AV1");
+        caps.Categories.AddCategoryMapping(157, NewznabStandardCategory.TV, "TV AV1");
+        caps.Categories.AddCategoryMapping(160, NewznabStandardCategory.TV, "TV Boxsets AV1");
+        caps.Categories.AddCategoryMapping(153, NewznabStandardCategory.Books, "Books");
+        caps.Categories.AddCategoryMapping(154, NewznabStandardCategory.AudioAudiobook, "Audiobooks");
+        caps.Categories.AddCategoryMapping(155, NewznabStandardCategory.Books, "Books & Magazines");
         caps.Categories.AddCategoryMapping(68, NewznabStandardCategory.MoviesOther, "Cams/TS");
-        caps.Categories.AddCategoryMapping(65, NewznabStandardCategory.TVDocumentary, "Documentaries");
+        caps.Categories.AddCategoryMapping(140, NewznabStandardCategory.TVDocumentary, "Documentary");
         caps.Categories.AddCategoryMapping(10, NewznabStandardCategory.MoviesDVD, "DVDR");
+        caps.Categories.AddCategoryMapping(109, NewznabStandardCategory.MoviesBluRay, "Bluray Disc");
+        caps.Categories.AddCategoryMapping(131, NewznabStandardCategory.TVSport, "Fighting");
+        caps.Categories.AddCategoryMapping(134, NewznabStandardCategory.TVSport, "Fighting/Boxing");
+        caps.Categories.AddCategoryMapping(133, NewznabStandardCategory.TVSport, "Fighting/MMA");
+        caps.Categories.AddCategoryMapping(132, NewznabStandardCategory.TVSport, "Fighting/Wrestling");
         caps.Categories.AddCategoryMapping(72, NewznabStandardCategory.MoviesForeign, "Foreign");
-        caps.Categories.AddCategoryMapping(74, NewznabStandardCategory.TVOther, "Kids");
-        caps.Categories.AddCategoryMapping(95, NewznabStandardCategory.PCMac, "Mac Games");
-        caps.Categories.AddCategoryMapping(44, NewznabStandardCategory.TVSport, "MMA");
+        caps.Categories.AddCategoryMapping(116, NewznabStandardCategory.TVForeign, "Foreign Boxsets");
+        caps.Categories.AddCategoryMapping(114, NewznabStandardCategory.MoviesForeign, "Foreign Movies");
+        caps.Categories.AddCategoryMapping(115, NewznabStandardCategory.TVForeign, "Foreign TV");
+        caps.Categories.AddCategoryMapping(103, NewznabStandardCategory.ConsoleOther, "Games Console");
+        caps.Categories.AddCategoryMapping(105, NewznabStandardCategory.ConsoleOther, "Games Console/Nintendo");
+        caps.Categories.AddCategoryMapping(104, NewznabStandardCategory.ConsolePS4, "Games Console/Playstation");
+        caps.Categories.AddCategoryMapping(106, NewznabStandardCategory.ConsoleXBox, "Games Console/XBOX");
+        caps.Categories.AddCategoryMapping(6, NewznabStandardCategory.PCGames, "Games PC");
+        caps.Categories.AddCategoryMapping(108, NewznabStandardCategory.PC, "Games PC/Linux");
+        caps.Categories.AddCategoryMapping(107, NewznabStandardCategory.PCMac, "Games PC/Mac");
         caps.Categories.AddCategoryMapping(11, NewznabStandardCategory.Movies, "Movie Boxsets");
+        caps.Categories.AddCategoryMapping(118, NewznabStandardCategory.MoviesUHD, "Movie Boxsets/Boxset 4K");
+        caps.Categories.AddCategoryMapping(143, NewznabStandardCategory.MoviesHD, "Movie Boxsets/Boxset HD");
+        caps.Categories.AddCategoryMapping(119, NewznabStandardCategory.MoviesHD, "Movie Boxsets/Boxset HEVC");
+        caps.Categories.AddCategoryMapping(144, NewznabStandardCategory.MoviesSD, "Movie Boxsets/Boxset SD");
         caps.Categories.AddCategoryMapping(12, NewznabStandardCategory.Movies, "Movies");
+        caps.Categories.AddCategoryMapping(117, NewznabStandardCategory.MoviesUHD, "Movies 4K");
+        caps.Categories.AddCategoryMapping(145, NewznabStandardCategory.MoviesHD, "Movies HD");
         caps.Categories.AddCategoryMapping(100, NewznabStandardCategory.MoviesHD, "Movies HEVC");
+        caps.Categories.AddCategoryMapping(146, NewznabStandardCategory.MoviesSD, "Movies SD");
         caps.Categories.AddCategoryMapping(13, NewznabStandardCategory.Audio, "Music");
-        caps.Categories.AddCategoryMapping(15, NewznabStandardCategory.AudioVideo, "Music Videos");
-        caps.Categories.AddCategoryMapping(32, NewznabStandardCategory.ConsoleNDS, "NDS Games");
+        caps.Categories.AddCategoryMapping(135, NewznabStandardCategory.AudioLossless, "Music/FLAC");
+        caps.Categories.AddCategoryMapping(151, NewznabStandardCategory.Audio, "Karaoke");
+        caps.Categories.AddCategoryMapping(136, NewznabStandardCategory.Audio, "Music Boxset");
+        caps.Categories.AddCategoryMapping(148, NewznabStandardCategory.AudioVideo, "Music Videos");
         caps.Categories.AddCategoryMapping(9, NewznabStandardCategory.Other, "Other");
-        caps.Categories.AddCategoryMapping(6, NewznabStandardCategory.PCGames, "PC Games");
-        caps.Categories.AddCategoryMapping(45, NewznabStandardCategory.Other, "Pictures");
-        caps.Categories.AddCategoryMapping(31, NewznabStandardCategory.ConsolePS4, "Playstation");
-        caps.Categories.AddCategoryMapping(71, NewznabStandardCategory.TV, "PPV");
-        caps.Categories.AddCategoryMapping(54, NewznabStandardCategory.TV, "Soaps");
+        caps.Categories.AddCategoryMapping(125, NewznabStandardCategory.Other, "Other/Pictures");
+        caps.Categories.AddCategoryMapping(54, NewznabStandardCategory.TVOther, "Soaps");
+        caps.Categories.AddCategoryMapping(83, NewznabStandardCategory.TVOther, "Specials");
+        caps.Categories.AddCategoryMapping(139, NewznabStandardCategory.TV, "TOTM (Freeleech)");
+        caps.Categories.AddCategoryMapping(138, NewznabStandardCategory.TV, "TOTW (x2 upload)");
+        caps.Categories.AddCategoryMapping(139, NewznabStandardCategory.Movies, "TOTM (Freeleech)");
+        caps.Categories.AddCategoryMapping(138, NewznabStandardCategory.Movies, "TOTW (x2 upload)");
         caps.Categories.AddCategoryMapping(20, NewznabStandardCategory.TVSport, "Sports");
-        caps.Categories.AddCategoryMapping(102, NewznabStandardCategory.TVSport, "Sports FIFA World Cup");
-        caps.Categories.AddCategoryMapping(86, NewznabStandardCategory.TVSport, "Sports MotorSports");
-        caps.Categories.AddCategoryMapping(89, NewznabStandardCategory.TVSport, "Sports Olympics");
-        caps.Categories.AddCategoryMapping(88, NewznabStandardCategory.TVSport, "Sports UK Football");
-        caps.Categories.AddCategoryMapping(83, NewznabStandardCategory.Movies, "TOTM");
+        caps.Categories.AddCategoryMapping(88, NewznabStandardCategory.TVSport, "Sports/Football");
+        caps.Categories.AddCategoryMapping(86, NewznabStandardCategory.TVSport, "Sports/MotorSports");
+        caps.Categories.AddCategoryMapping(89, NewznabStandardCategory.TVSport, "Sports/Olympics");
+        caps.Categories.AddCategoryMapping(126, NewznabStandardCategory.TV, "TV");
+        caps.Categories.AddCategoryMapping(149, NewznabStandardCategory.TV, "TV Specials");
+        caps.Categories.AddCategoryMapping(127, NewznabStandardCategory.TVUHD, "TV 4K");
+        caps.Categories.AddCategoryMapping(129, NewznabStandardCategory.TVHD, "TV HD");
+        caps.Categories.AddCategoryMapping(130, NewznabStandardCategory.TVHD, "TV HEVC");
+        caps.Categories.AddCategoryMapping(128, NewznabStandardCategory.TVSD, "TV SD");
         caps.Categories.AddCategoryMapping(21, NewznabStandardCategory.TVSD, "TV Boxsets");
-        caps.Categories.AddCategoryMapping(76, NewznabStandardCategory.TVHD, "TV HD Boxsets");
-        caps.Categories.AddCategoryMapping(97, NewznabStandardCategory.TVHD, "TV HECV Boxsets");
-        caps.Categories.AddCategoryMapping(47, NewznabStandardCategory.TVHD, "TV HD");
-        caps.Categories.AddCategoryMapping(96, NewznabStandardCategory.TVHD, "TV HD HEVC");
-        caps.Categories.AddCategoryMapping(16, NewznabStandardCategory.TVSD, "TV SD");
-        caps.Categories.AddCategoryMapping(7, NewznabStandardCategory.ConsoleWii, "Wii Games");
-        caps.Categories.AddCategoryMapping(43, NewznabStandardCategory.TVSport, "Wrestling");
-        caps.Categories.AddCategoryMapping(8, NewznabStandardCategory.ConsoleXBox, "Xbox Games");
+        caps.Categories.AddCategoryMapping(120, NewznabStandardCategory.TVUHD, "Boxset TV 4K");
+        caps.Categories.AddCategoryMapping(76, NewznabStandardCategory.TVHD, "Boxset TV HD");
+        caps.Categories.AddCategoryMapping(97, NewznabStandardCategory.TVHD, "Boxset TV HEVC");
+        caps.Categories.AddCategoryMapping(147, NewznabStandardCategory.TVSD, "Boxset TV SD");
 
         return caps;
     }
@@ -257,11 +287,14 @@ public class XSpeedsRequestGenerator : IIndexerRequestGenerator
 
 public class XSpeedsParser : IParseIndexerResponse
 {
+    private readonly XSpeedsSettings _settings;
     private readonly IndexerCapabilitiesCategories _categories;
+
     private readonly Regex _dateAddedRegex = new (@"\d{2}-\d{2}-\d{4} \d{2}:\d{2}", RegexOptions.Compiled);
 
-    public XSpeedsParser(IndexerCapabilitiesCategories categories)
+    public XSpeedsParser(XSpeedsSettings settings, IndexerCapabilitiesCategories categories)
     {
+        _settings = settings;
         _categories = categories;
     }
 
@@ -270,11 +303,28 @@ public class XSpeedsParser : IParseIndexerResponse
         var releaseInfos = new List<ReleaseInfo>();
 
         var parser = new HtmlParser();
-        var dom = parser.ParseDocument(indexerResponse.Content);
+        using var dom = parser.ParseDocument(indexerResponse.Content);
 
         var rows = dom.QuerySelectorAll("table#sortabletable > tbody > tr:has(a[href*=\"details.php?id=\"])");
         foreach (var row in rows)
         {
+            var downloadVolumeFactor = 1.0;
+
+            if (row.QuerySelector("img[title^=\"Free Torrent\"], img[title^=\"Sitewide Free Torrent\"]") != null)
+            {
+                downloadVolumeFactor = 0.0;
+            }
+            else if (row.QuerySelector("img[title^=\"Silver Torrent\"]") != null)
+            {
+                downloadVolumeFactor = 0.5;
+            }
+
+            // Skip non-freeleech results when freeleech only is set
+            if (_settings.FreeleechOnly && downloadVolumeFactor != 0.0)
+            {
+                continue;
+            }
+
             var qDetails = row.QuerySelector("div > a[href*=\"details.php?id=\"]");
             var title = qDetails?.TextContent.Trim();
 
@@ -301,6 +351,7 @@ public class XSpeedsParser : IParseIndexerResponse
                 Peers = peers,
                 Size =  ParseUtil.GetBytes(row.QuerySelector("td:nth-of-type(5)")?.TextContent.Trim()),
                 Grabs = ParseUtil.CoerceInt(row.QuerySelector("td:nth-child(6)")?.TextContent),
+                DownloadVolumeFactor = downloadVolumeFactor,
                 UploadVolumeFactor = row.QuerySelector("img[title^=\"x2 Torrent\"]") != null ? 2 : 1,
                 MinimumRatio = 0.8
             };
@@ -311,19 +362,6 @@ public class XSpeedsParser : IParseIndexerResponse
                 release.PublishDate = DateTime.ParseExact(dateAddedMatch.Value, "dd-MM-yyyy HH:mm", CultureInfo.InvariantCulture);
             }
 
-            if (row.QuerySelector("img[title^=\"Free Torrent\"], img[title^=\"Sitewide Free Torrent\"]") != null)
-            {
-                release.DownloadVolumeFactor = 0;
-            }
-            else if (row.QuerySelector("img[title^=\"Silver Torrent\"]") != null)
-            {
-                release.DownloadVolumeFactor = 0.5;
-            }
-            else
-            {
-                release.DownloadVolumeFactor = 1;
-            }
-
             releaseInfos.Add(release);
         }
 
@@ -331,4 +369,10 @@ public class XSpeedsParser : IParseIndexerResponse
     }
 
     public Action<IDictionary<string, string>, DateTime?> CookiesUpdater { get; set; }
+}
+
+public class XSpeedsSettings : UserPassTorrentBaseSettings
+{
+    [FieldDefinition(4, Label = "Freeleech Only", Type = FieldType.Checkbox, HelpText = "Show freeleech releases only")]
+    public bool FreeleechOnly { get; set; } = false;
 }

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.Specialized;
+using System.Globalization;
 using System.Linq;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Http;
@@ -25,6 +26,31 @@ public class FileListRequestGenerator : IIndexerRequestGenerator
         {
             parameters.Set("action", "search-torrents");
 
+            var searchQuery = searchCriteria.SanitizedSearchTerm.Trim();
+
+            if (DateTime.TryParseExact($"{searchCriteria.Season} {searchCriteria.Episode}", "yyyy MM/dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var showDate))
+            {
+                if (searchCriteria.ImdbId.IsNotNullOrWhiteSpace())
+                {
+                    // Skip ID searches for daily episodes
+                    return pageableRequests;
+                }
+
+                searchQuery = $"{searchQuery} {showDate:yyyy.MM.dd}".Trim();
+            }
+            else
+            {
+                if (searchCriteria.Season.HasValue)
+                {
+                    parameters.Set("season", searchCriteria.Season.ToString());
+                }
+
+                if (searchCriteria.Episode.IsNotNullOrWhiteSpace())
+                {
+                    parameters.Set("episode", searchCriteria.Episode);
+                }
+            }
+
             if (searchCriteria.ImdbId.IsNotNullOrWhiteSpace())
             {
                 parameters.Set("type", "imdb");
@@ -33,17 +59,7 @@ public class FileListRequestGenerator : IIndexerRequestGenerator
             else if (searchCriteria.SearchTerm.IsNotNullOrWhiteSpace())
             {
                 parameters.Set("type", "name");
-                parameters.Set("query", searchCriteria.SanitizedSearchTerm.Trim());
-            }
-
-            if (searchCriteria.Season.HasValue)
-            {
-                parameters.Set("season", searchCriteria.Season.ToString());
-            }
-
-            if (searchCriteria.Episode.IsNotNullOrWhiteSpace())
-            {
-                parameters.Set("episode", searchCriteria.Episode);
+                parameters.Set("query", searchQuery);
             }
         }
 
@@ -135,7 +151,7 @@ public class FileListRequestGenerator : IIndexerRequestGenerator
 
         if (searchCriteria.Categories != null && searchCriteria.Categories.Any())
         {
-            parameters.Set("category", string.Join(",", Capabilities.Categories.MapTorznabCapsToTrackers(searchCriteria.Categories)));
+            parameters.Set("category", string.Join(",", Capabilities.Categories.MapTorznabCapsToTrackers(searchCriteria.Categories).Distinct().ToList()));
         }
 
         if (Settings.FreeleechOnly)

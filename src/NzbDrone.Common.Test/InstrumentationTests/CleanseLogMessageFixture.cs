@@ -10,7 +10,9 @@ namespace NzbDrone.Common.Test.InstrumentationTests
         // Indexer Urls
         [TestCase(@"https://iptorrents.com/torrents/rss?u=mySecret;tp=mySecret;l5;download")]
         [TestCase(@"http://rss.torrentleech.org/mySecret")]
-        [TestCase(@"http://rss.torrentleech.org/rss/download/12345/01233210/filename.torrent")]
+        [TestCase(@"https://rss24h.torrentleech.org/mySecret")]
+        [TestCase(@"http://rss.torrentleech.org/rss/download/12345/01233210/file.name-RLSGRP.torrent")]
+        [TestCase(@"https://www.torrentleech.org/rss/download/12345/01233210/file.name-RLSGRP.torrent")]
         [TestCase(@"http://www.bitmetv.org/rss.php?uid=mySecret&passkey=mySecret")]
         [TestCase(@"https://rss.omgwtfnzbs.org/rss-search.php?catid=19,20&user=sonarr&api=mySecret&eng=1")]
         [TestCase(@"https://dognzb.cr/fetch/2b51db35e1912ffc138825a12b9933d2/2b51db35e1910123321025a12b9933d2")]
@@ -27,6 +29,8 @@ namespace NzbDrone.Common.Test.InstrumentationTests
         [TestCase(@"https://beyond-hd.me/torrent/download/the-next-365-days-2022-2160p-nf-web-dl-dual-ddp-51-dovi-hdr-hevc-apex.225146.2b51db35e1912ffc138825a12b9933d2")]
         [TestCase(@"https://anthelion.me/api.php?api_key=2b51db35e1910123321025a12b9933d2&o=json&t=movie&q=&tmdb=&imdb=&cat=&limit=100&offset=0")]
         [TestCase(@"https://avistaz.to/api/v1/jackett/auth: username=mySecret&password=mySecret&pid=mySecret")]
+        [TestCase(@"https://www.sharewood.tv/api/2b51db35e1910123321025a12b9933d2/last-torrents")]
+        [TestCase(@"https://example.org/rss/torrents?rsskey=2b51db35e1910123321025a12b9933d2&search=")]
 
         // Indexer and Download Client Responses
 
@@ -41,6 +45,8 @@ namespace NzbDrone.Common.Test.InstrumentationTests
         // danish bytes response
         [TestCase(@",""rsskey"":""2b51db35e1910123321025a12b9933d2"",")]
         [TestCase(@",""passkey"":""2b51db35e1910123321025a12b9933d2"",")]
+        [TestCase(@"{""rsskey"":""2b51db35e1910123321025a12b9933d2""}")]
+        [TestCase(@"{""passkey"":""2b51db35e1910123321025a12b9933d2""}")]
 
         // nzbgeek & usenet response
         [TestCase(@"<guid isPermaLink=""true"">https://api.nzbgeek.info/api?t=details&amp;id=2b51db35e1910123321025a12b9933d2&amp;apikey=2b51db35e1910123321025a12b9933d2</guid>")]
@@ -79,13 +85,22 @@ namespace NzbDrone.Common.Test.InstrumentationTests
         // Deluge
         [TestCase(@",{""download_location"": ""C:\Users\\mySecret mySecret\\Downloads""}")]
         [TestCase(@",{""download_location"": ""/home/mySecret/Downloads""}")]
+        [TestCase(@",{""download_location"": ""/Users/mySecret/Downloads""}")]
         [TestCase(@"auth.login(""mySecret"")")]
 
         // Download Station
         [TestCase(@"webapi/entry.cgi?api=(removed)&version=2&method=login&account=01233210&passwd=mySecret&format=sid&session=DownloadStation")]
 
-        // Tracker Responses
-        [TestCase(@"tracker"":""http://xxx.yyy/announce.php?passkey=9pr04sg601233210imaveql2tyu8xyui"",""info"":""http://xxx.yyy/info?a=b""")]
+        // Announce URLs (passkeys) Magnet & Tracker
+        [TestCase(@"magnet_uri"":""magnet:?xt=urn:btih:9pr04sgkillroyimaveql2tyu8xyui&dn=&tr=https%3a%2f%2fxxx.yyy%2f9pr04sg601233210IMAveQL2tyu8xyui%2fannounce""}")]
+        [TestCase(@"magnet_uri"":""magnet:?xt=urn:btih:9pr04sgkillroyimaveql2tyu8xyui&dn=&tr=https%3a%2f%2fxxx.yyy%2ftracker.php%2f9pr04sg601233210IMAveQL2tyu8xyui%2fannounce""}")]
+        [TestCase(@"magnet_uri"":""magnet:?xt=urn:btih:9pr04sgkillroyimaveql2tyu8xyui&dn=&tr=https%3a%2f%2fxxx.yyy%2fannounce%2f9pr04sg601233210IMAveQL2tyu8xyui""}")]
+        [TestCase(@"magnet_uri"":""magnet:?xt=urn:btih:9pr04sgkillroyimaveql2tyu8xyui&dn=&tr=https%3a%2f%2fxxx.yyy%2fannounce.php%3fpasskey%3d9pr04sg601233210IMAveQL2tyu8xyui""}")]
+        [TestCase(@"tracker"":""https://xxx.yyy/9pr04sg601233210IMAveQL2tyu8xyui/announce""}")]
+        [TestCase(@"tracker"":""https://xxx.yyy/tracker.php/9pr04sg601233210IMAveQL2tyu8xyui/announce""}")]
+        [TestCase(@"tracker"":""https://xxx.yyy/announce/9pr04sg601233210IMAveQL2tyu8xyui""}")]
+        [TestCase(@"tracker"":""https://xxx.yyy/announce.php?passkey=9pr04sg601233210IMAveQL2tyu8xyui""}")]
+        [TestCase(@"tracker"":""http://xxx.yyy/announce.php?passkey=9pr04sg601233210IMAveQL2tyu8xyui"",""info"":""http://xxx.yyy/info?a=b""")]
 
         // BroadcastheNet
         [TestCase(@"method: ""getTorrents"", ""params"": [ ""mySecret"",")]
@@ -99,10 +114,17 @@ namespace NzbDrone.Common.Test.InstrumentationTests
         // RSS
         [TestCase(@"<atom:link href = ""https://api.nzb.su/api?t=search&amp;extended=1&amp;cat=3030&apikey=mySecret&amp;q=Diggers"" rel=""self"" type=""application/rss+xml"" />")]
 
+        // Applications
+        [TestCase(@"""name"":""apiKey"",""value"":""mySecret""")]
+
         // Internal
         [TestCase(@"[Info] MigrationController: *** Migrating Database=prowlarr-main;Host=postgres14;Username=mySecret;Password=mySecret;Port=5432;Enlist=False ***")]
         [TestCase("/readarr/signalr/messages/negotiate?access_token=1234530f422f4aacb6b301233210aaaa&negotiateVersion=1")]
         [TestCase(@"[Info] MigrationController: *** Migrating Database=prowlarr-main;Host=postgres14;Username=mySecret;Password=mySecret;Port=5432;token=mySecret;Enlist=False&username=mySecret;mypassword=mySecret;mypass=shouldkeep1;test_token=mySecret;password=123%@%_@!#^#@;use_password=mySecret;get_token=shouldkeep2;usetoken=shouldkeep3;passwrd=mySecret;")]
+
+        // Discord
+        [TestCase(@"https://discord.com/api/webhooks/mySecret")]
+        [TestCase(@"https://discord.com/api/webhooks/mySecret/01233210")]
         public void should_clean_message(string message)
         {
             var cleansedMessage = CleanseLogMessage.Cleanse(message);

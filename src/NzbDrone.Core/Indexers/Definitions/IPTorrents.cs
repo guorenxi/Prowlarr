@@ -4,16 +4,19 @@ using System.Collections.Specialized;
 using System.Linq;
 using System.Text.RegularExpressions;
 using AngleSharp.Html.Parser;
+using FluentValidation;
 using NLog;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Http;
 using NzbDrone.Core.Annotations;
 using NzbDrone.Core.Configuration;
+using NzbDrone.Core.Indexers.Exceptions;
 using NzbDrone.Core.Indexers.Settings;
 using NzbDrone.Core.IndexerSearch.Definitions;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.Parser;
 using NzbDrone.Core.Parser.Model;
+using NzbDrone.Core.Validation;
 
 namespace NzbDrone.Core.Indexers.Definitions
 {
@@ -32,11 +35,12 @@ namespace NzbDrone.Core.Indexers.Definitions
             "https://ipt.workisboring.net/",
             "https://ipt.lol/",
             "https://ipt.cool/",
-            "https://ipt.world/"
+            "https://ipt.world/",
+            "https://ipt.octopus.town/"
         };
         public override string Description => "IPTorrents (IPT) is a Private Torrent Tracker for 0DAY / GENERAL.";
-        public override DownloadProtocol Protocol => DownloadProtocol.Torrent;
         public override IndexerPrivacy Privacy => IndexerPrivacy.Private;
+        public override bool SupportsPagination => true;
         public override IndexerCapabilities Capabilities => SetCapabilities();
 
         public IPTorrents(IIndexerHttpClient httpClient, IEventAggregator eventAggregator, IIndexerStatusService indexerStatusService, IConfigService configService, Logger logger)
@@ -54,9 +58,26 @@ namespace NzbDrone.Core.Indexers.Definitions
             return new IPTorrentsParser(Settings, Capabilities.Categories);
         }
 
+        protected override bool CheckIfLoginNeeded(HttpResponse httpResponse)
+        {
+            if (!httpResponse.Content.Contains("lout.php"))
+            {
+                throw new IndexerAuthException("IPTorrents authentication with cookies failed.");
+            }
+
+            return false;
+        }
+
         protected override IDictionary<string, string> GetCookies()
         {
             return CookieUtil.CookieHeaderToDictionary(Settings.Cookie);
+        }
+
+        protected override IList<ReleaseInfo> CleanupReleases(IEnumerable<ReleaseInfo> releases, SearchCriteriaBase searchCriteria)
+        {
+            var cleanReleases = base.CleanupReleases(releases, searchCriteria);
+
+            return FilterReleasesByQuery(cleanReleases, searchCriteria).ToList();
         }
 
         private IndexerCapabilities SetCapabilities()
@@ -162,13 +183,13 @@ namespace NzbDrone.Core.Indexers.Definitions
         public IPTorrentsSettings Settings { get; set; }
         public IndexerCapabilities Capabilities { get; set; }
 
-        private IEnumerable<IndexerRequest> GetPagedRequests(string term, int[] categories, int limit, int offset, string imdbId = null)
+        private IEnumerable<IndexerRequest> GetPagedRequests(string term, SearchCriteriaBase searchCriteria, string imdbId = null)
         {
             var searchUrl = Settings.BaseUrl + "t";
 
             var qc = new NameValueCollection();
 
-            foreach (var cat in Capabilities.Categories.MapTorznabCapsToTrackers(categories))
+            foreach (var cat in Capabilities.Categories.MapTorznabCapsToTrackers(searchCriteria.Categories).Distinct())
             {
                 qc.Add(cat, string.Empty);
             }
@@ -182,18 +203,21 @@ namespace NzbDrone.Core.Indexers.Definitions
             {
                 // ipt uses sphinx, which supports boolean operators and grouping
                 qc.Add("q", "+(" + imdbId + ")");
+
+                // search in description
+                qc.Add("qf", "all");
             }
 
-            // changed from else if to if to support searching imdbid + season/episode in the same query
-            if (!string.IsNullOrWhiteSpace(term))
+            // changed from "else if" to "if" to support searching imdbid + season/episode in the same query
+            if (term.IsNotNullOrWhiteSpace())
             {
                 // similar to above
                 qc.Add("q", "+(" + term + ")");
             }
 
-            if (offset > 0 && limit > 0)
+            if (searchCriteria.Limit is > 0 && searchCriteria.Offset is > 0)
             {
-                var page = (int)(offset / limit) + 1;
+                var page = (int)(searchCriteria.Offset / searchCriteria.Limit) + 1;
                 qc.Add("p", page.ToString());
             }
 
@@ -216,7 +240,7 @@ namespace NzbDrone.Core.Indexers.Definitions
         {
             var pageableRequests = new IndexerPageableRequestChain();
 
-            pageableRequests.Add(GetPagedRequests(string.Format("{0}", searchCriteria.SearchTerm), searchCriteria.Categories, searchCriteria.Limit ?? 100, searchCriteria.Offset ?? 0, searchCriteria.FullImdbId));
+            pageableRequests.Add(GetPagedRequests($"{searchCriteria.SearchTerm}", searchCriteria, searchCriteria.FullImdbId));
 
             return pageableRequests;
         }
@@ -225,7 +249,7 @@ namespace NzbDrone.Core.Indexers.Definitions
         {
             var pageableRequests = new IndexerPageableRequestChain();
 
-            pageableRequests.Add(GetPagedRequests(string.Format("{0}", searchCriteria.SanitizedSearchTerm), searchCriteria.Categories, searchCriteria.Limit ?? 100, searchCriteria.Offset ?? 0));
+            pageableRequests.Add(GetPagedRequests($"{searchCriteria.SanitizedSearchTerm}", searchCriteria));
 
             return pageableRequests;
         }
@@ -234,7 +258,14 @@ namespace NzbDrone.Core.Indexers.Definitions
         {
             var pageableRequests = new IndexerPageableRequestChain();
 
-            pageableRequests.Add(GetPagedRequests(string.Format("{0}", searchCriteria.SanitizedTvSearchString), searchCriteria.Categories, searchCriteria.Limit ?? 100, searchCriteria.Offset ?? 0, searchCriteria.FullImdbId));
+            var searchTerm = $"{searchCriteria.SanitizedTvSearchString}";
+
+            if (searchCriteria.Season > 0 && searchCriteria.Episode.IsNullOrWhiteSpace())
+            {
+                searchTerm += "*";
+            }
+
+            pageableRequests.Add(GetPagedRequests(searchTerm.Trim(), searchCriteria, searchCriteria.FullImdbId));
 
             return pageableRequests;
         }
@@ -243,7 +274,7 @@ namespace NzbDrone.Core.Indexers.Definitions
         {
             var pageableRequests = new IndexerPageableRequestChain();
 
-            pageableRequests.Add(GetPagedRequests(string.Format("{0}", searchCriteria.SanitizedSearchTerm), searchCriteria.Categories, searchCriteria.Limit ?? 100, searchCriteria.Offset ?? 0));
+            pageableRequests.Add(GetPagedRequests($"{searchCriteria.SanitizedSearchTerm}", searchCriteria));
 
             return pageableRequests;
         }
@@ -252,7 +283,7 @@ namespace NzbDrone.Core.Indexers.Definitions
         {
             var pageableRequests = new IndexerPageableRequestChain();
 
-            pageableRequests.Add(GetPagedRequests(string.Format("{0}", searchCriteria.SanitizedSearchTerm), searchCriteria.Categories, searchCriteria.Limit ?? 100, searchCriteria.Offset ?? 0));
+            pageableRequests.Add(GetPagedRequests($"{searchCriteria.SanitizedSearchTerm}", searchCriteria));
 
             return pageableRequests;
         }
@@ -274,10 +305,14 @@ namespace NzbDrone.Core.Indexers.Definitions
 
         public IList<ReleaseInfo> ParseResponse(IndexerResponse indexerResponse)
         {
-            var torrentInfos = new List<TorrentInfo>();
+            var torrentInfos = new List<ReleaseInfo>();
 
             var parser = new HtmlParser();
-            var doc = parser.ParseDocument(indexerResponse.Content);
+            using var doc = parser.ParseDocument(indexerResponse.Content);
+
+            var headerColumns = doc.QuerySelectorAll("table[id=\"torrents\"] > thead > tr > th").Select(x => x.TextContent.Trim()).ToList();
+            var sizeIndex = FindColumnIndexOrDefault(headerColumns, "Sort by size", 5);
+            var filesIndex = FindColumnIndexOrDefault(headerColumns, "Sort by files");
 
             var rows = doc.QuerySelectorAll("table[id=\"torrents\"] > tbody > tr");
             foreach (var row in rows)
@@ -300,9 +335,8 @@ namespace NzbDrone.Core.Indexers.Definitions
                 var dateSplit = descrSplit.Last().Split(new[] { " by " }, StringSplitOptions.None);
                 var publishDate = DateTimeUtil.FromTimeAgo(dateSplit.First());
                 var description = descrSplit.Length > 1 ? "Tags: " + descrSplit.First().Trim() : "";
-                description += dateSplit.Length > 1 ? " Uploaded by: " + dateSplit.Last().Trim() : "";
 
-                var catIcon = row.QuerySelector("td:nth-of-type(1) a");
+                var catIcon = row.QuerySelector("td:nth-of-type(1) a[href^=\"?\"]");
                 if (catIcon == null)
                 {
                     // Torrents - Category column == Text or Code
@@ -311,38 +345,42 @@ namespace NzbDrone.Core.Indexers.Definitions
                 }
 
                 // Torrents - Category column == Icons
-                var cat = _categories.MapTrackerCatToNewznab(catIcon.GetAttribute("href").Substring(1));
+                var cat = _categories.MapTrackerCatToNewznab(catIcon.GetAttribute("href")?.Substring(1));
 
-                var size = ParseUtil.GetBytes(row.Children[5].TextContent);
+                var size = ParseUtil.GetBytes(row.Children[sizeIndex].TextContent);
 
-                var colIndex = 6;
                 int? files = null;
 
-                if (row.Children.Length == 10)
+                if (filesIndex != -1)
                 {
-                    files = ParseUtil.CoerceInt(row.Children[colIndex].TextContent.Replace("Go to files", ""));
-                    colIndex++;
+                    files = ParseUtil.CoerceInt(row.Children[filesIndex].TextContent.Replace("Go to files", ""));
                 }
 
-                var grabs = ParseUtil.CoerceInt(row.Children[colIndex++].TextContent);
-                var seeders = ParseUtil.CoerceInt(row.Children[colIndex++].TextContent);
-                var leechers = ParseUtil.CoerceInt(row.Children[colIndex].TextContent);
-                var dlVolumeFactor = row.QuerySelector("span.free") != null ? 0 : 1;
+                var colIndex = row.Children.Length == 10 ? 7 : 6;
+
+                var grabsIndex = FindColumnIndexOrDefault(headerColumns, "Sort by snatches", colIndex++);
+                var seedersIndex = FindColumnIndexOrDefault(headerColumns, "Sort by seeders", colIndex++);
+                var leechersIndex = FindColumnIndexOrDefault(headerColumns, "Sort by leechers", colIndex);
+
+                var grabs = ParseUtil.CoerceInt(row.Children[grabsIndex].TextContent);
+                var seeders = ParseUtil.CoerceInt(row.Children[seedersIndex].TextContent);
+                var leechers = ParseUtil.CoerceInt(row.Children[leechersIndex].TextContent);
 
                 var release = new TorrentInfo
                 {
-                    Title = title,
                     Guid = details.AbsoluteUri,
                     DownloadUrl = link.AbsoluteUri,
                     InfoUrl = details.AbsoluteUri,
-                    PublishDate = publishDate,
+                    Title = title,
+                    Description = description,
                     Categories = cat,
                     Size = size,
                     Files = files,
                     Grabs = grabs,
                     Seeders = seeders,
                     Peers = seeders + leechers,
-                    DownloadVolumeFactor = dlVolumeFactor,
+                    PublishDate = publishDate,
+                    DownloadVolumeFactor = row.QuerySelector("span.free") != null ? 0 : 1,
                     UploadVolumeFactor = 1,
                     MinimumRatio = 1,
                     MinimumSeedTime = 1209600 // 336 hours
@@ -354,24 +392,49 @@ namespace NzbDrone.Core.Indexers.Definitions
             return torrentInfos.ToArray();
         }
 
+        private static int FindColumnIndexOrDefault(List<string> columns, string name, int defaultIndex = -1)
+        {
+            var index = columns.FindIndex(x => x.Equals(name, StringComparison.Ordinal));
+
+            return index != -1 ? index : defaultIndex;
+        }
+
         public Action<IDictionary<string, string>, DateTime?> CookiesUpdater { get; set; }
 
         private static string CleanTitle(string title)
         {
-            // drop invalid chars that seems to have cropped up in some titles. #6582
+            // Drop invalid chars that seems to have cropped up in some titles. #6582
             title = Regex.Replace(title, @"[\u0000-\u0008\u000A-\u001F\u0100-\uFFFF]", string.Empty, RegexOptions.Compiled);
             title = Regex.Replace(title, @"[\(\[\{]REQ(UEST(ED)?)?[\)\]\}]", string.Empty, RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+            // Drop languages between brackets conflicting with anime release group parsing
+            title = Regex.Replace(title, @"^\[[a-z0-9 ._-]+\][-._ ](?<title>.*-[a-z0-9]+)$", "${title}", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
             return title.Trim(' ', '-', ':');
         }
     }
 
+    public class IPTorrentsValidator : CookieBaseSettingsValidator<IPTorrentsSettings>
+    {
+        public IPTorrentsValidator()
+        {
+            RuleFor(c => c.UserAgent).NotEmpty();
+        }
+    }
+
     public class IPTorrentsSettings : CookieTorrentBaseSettings
     {
-        [FieldDefinition(3, Label = "Cookie User-Agent", Type = FieldType.Textbox, HelpText = "User-Agent associated with cookie used from Browser")]
+        private static readonly IPTorrentsValidator Validator = new ();
+
+        [FieldDefinition(3, Label = "IndexerIPTorrentsSettingsCookieUserAgent", Type = FieldType.Textbox, HelpText = "IndexerIPTorrentsSettingsCookieUserAgentHelpText")]
         public string UserAgent { get; set; }
 
-        [FieldDefinition(4, Label = "FreeLeech Only", Type = FieldType.Checkbox, HelpText = "Search Freeleech torrents only")]
+        [FieldDefinition(4, Label = "IndexerSettingsFreeleechOnly", Type = FieldType.Checkbox, HelpText = "IndexerIPTorrentsSettingsFreeleechOnlyHelpText")]
         public bool FreeLeechOnly { get; set; }
+
+        public override NzbDroneValidationResult Validate()
+        {
+            return new NzbDroneValidationResult(Validator.Validate(this));
+        }
     }
 }

@@ -28,7 +28,6 @@ namespace NzbDrone.Core.Indexers.Definitions
         public override string Description => "SceneHD is Private site for HD TV / MOVIES";
         public override string Language => "en-US";
         public override Encoding Encoding => Encoding.UTF8;
-        public override DownloadProtocol Protocol => DownloadProtocol.Torrent;
         public override IndexerPrivacy Privacy => IndexerPrivacy.Private;
         public override IndexerCapabilities Capabilities => SetCapabilities();
 
@@ -39,7 +38,7 @@ namespace NzbDrone.Core.Indexers.Definitions
 
         public override IIndexerRequestGenerator GetRequestGenerator()
         {
-            return new SceneHDRequestGenerator() { Settings = Settings, Capabilities = Capabilities };
+            return new SceneHDRequestGenerator(Settings, Capabilities);
         }
 
         public override IParseIndexerResponse GetParser()
@@ -89,42 +88,41 @@ namespace NzbDrone.Core.Indexers.Definitions
 
     public class SceneHDRequestGenerator : IIndexerRequestGenerator
     {
-        public SceneHDSettings Settings { get; set; }
-        public IndexerCapabilities Capabilities { get; set; }
-        public string BaseUrl { get; set; }
+        private readonly SceneHDSettings _settings;
+        private readonly IndexerCapabilities _capabilities;
 
-        public SceneHDRequestGenerator()
+        public SceneHDRequestGenerator(SceneHDSettings settings, IndexerCapabilities capabilities)
         {
+            _settings = settings;
+            _capabilities = capabilities;
         }
 
         private IEnumerable<IndexerRequest> GetPagedRequests(string term, int[] categories, string imdbId = null)
         {
             var search = new[] { imdbId, term };
 
-            var qc = new NameValueCollection
+            var parameters = new NameValueCollection
             {
                 { "api", "" },
-                { "passkey", Settings.Passkey },
+                { "passkey", _settings.Passkey },
                 { "search", string.Join(" ", search.Where(s => s.IsNotNullOrWhiteSpace())) }
             };
 
-            foreach (var cat in Capabilities.Categories.MapTorznabCapsToTrackers(categories))
+            if (categories?.Length > 0)
             {
-                qc.Add("categories[" + cat + "]", "1");
+                parameters.Add("cat", _capabilities.Categories.MapTorznabCapsToTrackers(categories).Distinct().Join(","));
             }
 
-            var searchUrl = string.Format("{0}/browse.php?{1}", Settings.BaseUrl.TrimEnd('/'), qc.GetQueryString());
+            var searchUrl = $"{_settings.BaseUrl.TrimEnd('/')}/browse.php?{parameters.GetQueryString()}";
 
-            var request = new IndexerRequest(searchUrl, HttpAccept.Json);
-
-            yield return request;
+            yield return new IndexerRequest(searchUrl, HttpAccept.Json);
         }
 
         public IndexerPageableRequestChain GetSearchRequests(MovieSearchCriteria searchCriteria)
         {
             var pageableRequests = new IndexerPageableRequestChain();
 
-            pageableRequests.Add(GetPagedRequests(string.Format("{0}", searchCriteria.SanitizedSearchTerm), searchCriteria.Categories, searchCriteria.FullImdbId));
+            pageableRequests.Add(GetPagedRequests($"{searchCriteria.SanitizedSearchTerm}", searchCriteria.Categories, searchCriteria.FullImdbId));
 
             return pageableRequests;
         }
@@ -133,7 +131,7 @@ namespace NzbDrone.Core.Indexers.Definitions
         {
             var pageableRequests = new IndexerPageableRequestChain();
 
-            pageableRequests.Add(GetPagedRequests(string.Format("{0}", searchCriteria.SanitizedSearchTerm), searchCriteria.Categories));
+            pageableRequests.Add(GetPagedRequests($"{searchCriteria.SanitizedSearchTerm}", searchCriteria.Categories));
 
             return pageableRequests;
         }
@@ -142,7 +140,7 @@ namespace NzbDrone.Core.Indexers.Definitions
         {
             var pageableRequests = new IndexerPageableRequestChain();
 
-            pageableRequests.Add(GetPagedRequests(string.Format("{0}", searchCriteria.SanitizedTvSearchString), searchCriteria.Categories, searchCriteria.FullImdbId));
+            pageableRequests.Add(GetPagedRequests($"{searchCriteria.SanitizedTvSearchString}", searchCriteria.Categories, searchCriteria.FullImdbId));
 
             return pageableRequests;
         }
@@ -151,7 +149,7 @@ namespace NzbDrone.Core.Indexers.Definitions
         {
             var pageableRequests = new IndexerPageableRequestChain();
 
-            pageableRequests.Add(GetPagedRequests(string.Format("{0}", searchCriteria.SanitizedSearchTerm), searchCriteria.Categories));
+            pageableRequests.Add(GetPagedRequests($"{searchCriteria.SanitizedSearchTerm}", searchCriteria.Categories));
 
             return pageableRequests;
         }
@@ -160,7 +158,7 @@ namespace NzbDrone.Core.Indexers.Definitions
         {
             var pageableRequests = new IndexerPageableRequestChain();
 
-            pageableRequests.Add(GetPagedRequests(string.Format("{0}", searchCriteria.SanitizedSearchTerm), searchCriteria.Categories));
+            pageableRequests.Add(GetPagedRequests($"{searchCriteria.SanitizedSearchTerm}", searchCriteria.Categories));
 
             return pageableRequests;
         }
@@ -217,7 +215,7 @@ namespace NzbDrone.Core.Indexers.Definitions
                     Files = item.Value<int>("numfiles"),
                     Seeders = item.Value<int>("seeders"),
                     Peers = item.Value<int>("leechers") + item.Value<int>("seeders"),
-                    ImdbId = ParseUtil.GetImdbID(item.Value<string>("imdbid")) ?? 0,
+                    ImdbId = ParseUtil.GetImdbId(item.Value<string>("imdbid")) ?? 0,
                     MinimumRatio = 1,
                     MinimumSeedTime = 0,
                     DownloadVolumeFactor = dlVolumeFactor,

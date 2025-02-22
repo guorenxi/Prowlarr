@@ -3,12 +3,13 @@ using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
+using System.Net;
 using NLog;
 using NzbDrone.Common.Cache;
 using NzbDrone.Common.Disk;
 using NzbDrone.Common.EnvironmentInfo;
 using NzbDrone.Common.Http;
-using NzbDrone.Core.Indexers.Cardigann;
+using NzbDrone.Core.Indexers.Definitions.Cardigann;
 using NzbDrone.Core.Lifecycle;
 using NzbDrone.Core.Messaging.Commands;
 using NzbDrone.Core.Messaging.Events;
@@ -29,7 +30,7 @@ namespace NzbDrone.Core.IndexerVersions
         /* Update Service will fall back if version # does not exist for an indexer  per Ta */
 
         private const string DEFINITION_BRANCH = "master";
-        private const int DEFINITION_VERSION = 8;
+        private const int DEFINITION_VERSION = 11;
 
         // Used when moving yml to C#
         private readonly List<string> _definitionBlocklist = new ()
@@ -46,6 +47,8 @@ namespace NzbDrone.Core.IndexerVersions
             "desitorrents",
             "hdbits",
             "lat-team",
+            "mteamtp",
+            "mteamtp2fa",
             "reelflix",
             "shareisland",
             "skipthecommercials",
@@ -92,8 +95,10 @@ namespace NzbDrone.Core.IndexerVersions
                     var response = _httpClient.Get<List<CardigannMetaDefinition>>(request);
                     indexerList = response.Resource.Where(i => !_definitionBlocklist.Contains(i.File)).ToList();
                 }
-                catch
+                catch (Exception ex)
                 {
+                    _logger.Warn(ex, "Error while getting indexer definitions, fallback to reading from disk.");
+
                     var definitionFolder = Path.Combine(_appFolderInfo.AppDataFolder, "Definitions");
 
                     indexerList = ReadDefinitionsFromDisk(indexerList, definitionFolder);
@@ -104,9 +109,9 @@ namespace NzbDrone.Core.IndexerVersions
 
                 indexerList = ReadDefinitionsFromDisk(indexerList, customDefinitionFolder);
             }
-            catch
+            catch (Exception ex)
             {
-                _logger.Error("Failed to Connect to Indexer Definition Server for Indexer listing");
+                _logger.Error(ex, "Failed to Connect to Indexer Definition Server for Indexer listing");
             }
 
             return indexerList;
@@ -114,7 +119,7 @@ namespace NzbDrone.Core.IndexerVersions
 
         public CardigannDefinition GetCachedDefinition(string fileKey)
         {
-            if (string.IsNullOrEmpty(fileKey))
+            if (string.IsNullOrWhiteSpace(fileKey))
             {
                 throw new ArgumentNullException(nameof(fileKey));
             }
@@ -137,11 +142,11 @@ namespace NzbDrone.Core.IndexerVersions
 
             if (directoryInfo.Exists)
             {
-                var files = directoryInfo.GetFiles($"*.yml", options);
+                var files = directoryInfo.GetFiles("*.yml", options);
 
                 foreach (var file in files)
                 {
-                    _logger.Debug("Loading definition " + file.FullName);
+                    _logger.Debug("Loading definition {0}", file.FullName);
 
                     try
                     {
@@ -158,9 +163,9 @@ namespace NzbDrone.Core.IndexerVersions
 
                         indexerList.Add(definition);
                     }
-                    catch (Exception e)
+                    catch (Exception ex)
                     {
-                        _logger.Error($"Error while parsing Cardigann definition {file.FullName}\n{e}");
+                        _logger.Error(ex, "Error while parsing Cardigann definition {0}", file.FullName);
                     }
                 }
             }
@@ -170,7 +175,7 @@ namespace NzbDrone.Core.IndexerVersions
 
         private CardigannDefinition GetUncachedDefinition(string fileKey)
         {
-            if (string.IsNullOrEmpty(fileKey))
+            if (string.IsNullOrWhiteSpace(fileKey))
             {
                 throw new ArgumentNullException(nameof(fileKey));
             }
@@ -188,7 +193,8 @@ namespace NzbDrone.Core.IndexerVersions
                 if (files.Any())
                 {
                     var file = files.First();
-                    _logger.Trace("Loading Cardigann definition " + file.FullName);
+                    _logger.Trace("Loading Cardigann definition {0}", file.FullName);
+
                     try
                     {
                         var definitionString = File.ReadAllText(file.FullName);
@@ -196,9 +202,9 @@ namespace NzbDrone.Core.IndexerVersions
 
                         return CleanIndexerDefinition(definition);
                     }
-                    catch (Exception e)
+                    catch (Exception ex)
                     {
-                        _logger.Error($"Error while parsing Cardigann definition {file.FullName}\n{e}");
+                        _logger.Error(ex, "Error while parsing Cardigann definition {0}", file.FullName);
                     }
                 }
             }
@@ -206,7 +212,7 @@ namespace NzbDrone.Core.IndexerVersions
             var dbDefs = _versionService.All();
 
             //Check to ensure it's in versioned defs before we go to web
-            if (dbDefs.Count > 0 && !dbDefs.Any(x => x.File == fileKey))
+            if (dbDefs.Count > 0 && dbDefs.All(x => x.File != fileKey))
             {
                 throw new ArgumentNullException(nameof(fileKey));
             }
@@ -217,9 +223,25 @@ namespace NzbDrone.Core.IndexerVersions
 
         private CardigannDefinition GetHttpDefinition(string id)
         {
-            var req = new HttpRequest($"https://indexers.prowlarr.com/{DEFINITION_BRANCH}/{DEFINITION_VERSION}/{id}");
-            var response = _httpClient.Get(req);
-            var definition = _deserializer.Deserialize<CardigannDefinition>(response.Content);
+            if (string.IsNullOrWhiteSpace(id))
+            {
+                throw new ArgumentNullException(nameof(id));
+            }
+
+            CardigannDefinition definition;
+
+            try
+            {
+                var request = new HttpRequest($"https://indexers.prowlarr.com/{DEFINITION_BRANCH}/{DEFINITION_VERSION}/{id}");
+                var response = _httpClient.Get(request);
+
+                definition = _deserializer.Deserialize<CardigannDefinition>(response.Content);
+            }
+            catch (HttpException ex) when (ex.Response.StatusCode == HttpStatusCode.NotFound)
+            {
+                throw new Exception($"Indexer definition for '{id}' does not exist.", ex);
+            }
+
             return CleanIndexerDefinition(definition);
         }
 
@@ -289,11 +311,11 @@ namespace NzbDrone.Core.IndexerVersions
                 EnsureDefinitionsFolder();
 
                 var definitionsFolder = Path.Combine(startupFolder, "Definitions");
-                var saveFile = Path.Combine(definitionsFolder, $"indexers.zip");
+                var saveFile = Path.Combine(definitionsFolder, "indexers.zip");
 
                 _httpClient.DownloadFile($"https://indexers.prowlarr.com/{DEFINITION_BRANCH}/{DEFINITION_VERSION}/package.zip", saveFile);
 
-                using (ZipArchive archive = ZipFile.OpenRead(saveFile))
+                using (var archive = ZipFile.OpenRead(saveFile))
                 {
                     archive.ExtractToDirectory(definitionsFolder, true);
                 }

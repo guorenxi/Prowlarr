@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Collections.Specialized;
 using System.Globalization;
 using System.Linq;
-using System.Net.Http;
 using System.Text;
 using System.Threading.Tasks;
 using AngleSharp.Dom;
@@ -29,7 +28,6 @@ public class NorBits : TorrentIndexerBase<NorBitsSettings>
     public override string Description => "NorBits is a Norwegian Private site for MOVIES / TV / GENERAL";
     public override string Language => "nb-NO";
     public override Encoding Encoding => Encoding.GetEncoding("iso-8859-1");
-    public override DownloadProtocol Protocol => DownloadProtocol.Torrent;
     public override IndexerPrivacy Privacy => IndexerPrivacy.Private;
     public override IndexerCapabilities Capabilities => SetCapabilities();
 
@@ -77,12 +75,16 @@ public class NorBits : TorrentIndexerBase<NorBitsSettings>
         {
             LogResponseContent = true,
             AllowAutoRedirect = true,
-            Method = HttpMethod.Post
+            SuppressHttpError = true
         };
 
         var authLoginCheckRequest = requestBuilder3
+            .Post()
             .AddFormParameter("username", Settings.Username)
             .AddFormParameter("password", Settings.Password)
+            .AddFormParameter("code", Settings.TwoFactorAuthCode ?? string.Empty)
+            .AddFormParameter("logout", "no")
+            .AddFormParameter("returnto", "/")
             .SetCookies(indexPage.GetCookies())
             .SetHeader("Referer", loginUrl)
             .Build();
@@ -127,26 +129,14 @@ public class NorBits : TorrentIndexerBase<NorBitsSettings>
             }
         };
 
-        caps.Categories.AddCategoryMapping("main_cat[]=1&sub2_cat[]=49", NewznabStandardCategory.MoviesUHD, "Filmer - UHD-2160p");
-        caps.Categories.AddCategoryMapping("main_cat[]=1&sub2_cat[]=19", NewznabStandardCategory.MoviesHD, "Filmer - HD-1080p/i");
-        caps.Categories.AddCategoryMapping("main_cat[]=1&sub2_cat[]=20", NewznabStandardCategory.MoviesHD, "Filmer - HD-720p");
-        caps.Categories.AddCategoryMapping("main_cat[]=1&sub2_cat[]=22", NewznabStandardCategory.MoviesSD, "Filmer - SD");
-        caps.Categories.AddCategoryMapping("main_cat[]=2&sub2_cat[]=49", NewznabStandardCategory.TVUHD, "TV - UHD-2160p");
-        caps.Categories.AddCategoryMapping("main_cat[]=2&sub2_cat[]=19", NewznabStandardCategory.TVHD, "TV - HD-1080p/i");
-        caps.Categories.AddCategoryMapping("main_cat[]=2&sub2_cat[]=20", NewznabStandardCategory.TVHD, "TV - HD-720p");
-        caps.Categories.AddCategoryMapping("main_cat[]=2&sub2_cat[]=22", NewznabStandardCategory.TVSD, "TV - SD");
+        caps.Categories.AddCategoryMapping("main_cat[]=1", NewznabStandardCategory.Movies, "Filmer");
+        caps.Categories.AddCategoryMapping("main_cat[]=2", NewznabStandardCategory.TV, "TV");
         caps.Categories.AddCategoryMapping("main_cat[]=3", NewznabStandardCategory.PC, "Programmer");
         caps.Categories.AddCategoryMapping("main_cat[]=4", NewznabStandardCategory.Console, "Spill");
-        caps.Categories.AddCategoryMapping("main_cat[]=5&sub2_cat[]=42", NewznabStandardCategory.AudioMP3, "Musikk - 192");
-        caps.Categories.AddCategoryMapping("main_cat[]=5&sub2_cat[]=43", NewznabStandardCategory.AudioMP3, "Musikk - 256");
-        caps.Categories.AddCategoryMapping("main_cat[]=5&sub2_cat[]=44", NewznabStandardCategory.AudioMP3, "Musikk - 320");
-        caps.Categories.AddCategoryMapping("main_cat[]=5&sub2_cat[]=45", NewznabStandardCategory.AudioMP3, "Musikk - VBR");
-        caps.Categories.AddCategoryMapping("main_cat[]=5&sub2_cat[]=46", NewznabStandardCategory.AudioLossless, "Musikk - Lossless");
+        caps.Categories.AddCategoryMapping("main_cat[]=5", NewznabStandardCategory.Audio, "Musikk");
         caps.Categories.AddCategoryMapping("main_cat[]=6", NewznabStandardCategory.Books, "Tidsskrift");
         caps.Categories.AddCategoryMapping("main_cat[]=7", NewznabStandardCategory.AudioAudiobook, "Lydbøker");
-        caps.Categories.AddCategoryMapping("main_cat[]=8&sub2_cat[]=19", NewznabStandardCategory.AudioVideo, "Musikkvideoer - HD-1080p/i");
-        caps.Categories.AddCategoryMapping("main_cat[]=8&sub2_cat[]=20", NewznabStandardCategory.AudioVideo, "Musikkvideoer - HD-720p");
-        caps.Categories.AddCategoryMapping("main_cat[]=8&sub2_cat[]=22", NewznabStandardCategory.AudioVideo, "Musikkvideoer - SD");
+        caps.Categories.AddCategoryMapping("main_cat[]=8", NewznabStandardCategory.AudioVideo, "Musikkvideoer");
         caps.Categories.AddCategoryMapping("main_cat[]=40", NewznabStandardCategory.AudioOther, "Podcasts");
 
         return caps;
@@ -175,6 +165,11 @@ public class NorBitsRequestGenerator : IIndexerRequestGenerator
             { "scenerelease", "0" }
         };
 
+        if (_settings.FreeLeechOnly)
+        {
+            parameters.Set("FL", "1");
+        }
+
         var searchTerm = "search=";
 
         if (!string.IsNullOrWhiteSpace(imdbId))
@@ -183,7 +178,7 @@ public class NorBitsRequestGenerator : IIndexerRequestGenerator
         }
         else if (!string.IsNullOrWhiteSpace(term))
         {
-            searchTerm = "search=" + term.UrlEncode(Encoding.GetEncoding(28591));
+            searchTerm = "search=" + term.UrlEncode(Encoding.UTF8);
         }
 
         searchUrl += "?" + searchTerm + "&" + parameters.GetQueryString();
@@ -264,26 +259,23 @@ public class NorBitsParser : IParseIndexerResponse
         var releaseInfos = new List<ReleaseInfo>();
 
         var parser = new HtmlParser();
-        var dom = parser.ParseDocument(indexerResponse.Content);
+        using var dom = parser.ParseDocument(indexerResponse.Content);
 
         var rows = dom.QuerySelectorAll("#torrentTable > tbody > tr").Skip(1).ToCollection();
 
         foreach (var row in rows)
         {
-            var link = _settings.BaseUrl + row.QuerySelector("td:nth-of-type(2) > a[href*=\"download.php?id=\"]")?.GetAttribute("href").TrimStart('/');
+            var link = _settings.BaseUrl + row.QuerySelector("td:nth-of-type(2) > a[href*=\"download.php?id=\"]")?.GetAttribute("href")?.TrimStart('/');
             var qDetails = row.QuerySelector("td:nth-of-type(2) > a[href*=\"details.php?id=\"]");
 
-            var title = qDetails?.GetAttribute("title").Trim();
-            var details = _settings.BaseUrl + qDetails?.GetAttribute("href").TrimStart('/');
+            var title = qDetails?.GetAttribute("title")?.Trim();
+            var details = _settings.BaseUrl + qDetails?.GetAttribute("href")?.TrimStart('/');
 
-            var mainCategory = row.QuerySelector("td:nth-of-type(1) > div > a[href*=\"main_cat[]\"]")?.GetAttribute("href")?.Split('?').Last();
-            var secondCategory = row.QuerySelector("td:nth-of-type(1) > div > a[href*=\"sub2_cat[]\"]")?.GetAttribute("href")?.Split('?').Last();
+            var catQuery = row.QuerySelector("td:nth-of-type(1) a[href*=\"main_cat[]\"]")?.GetAttribute("href")?.Split('?').Last().Split('&', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            var category = catQuery?.FirstOrDefault(x => x.StartsWith("main_cat[]=", StringComparison.OrdinalIgnoreCase));
 
-            var categoryList = new[] { mainCategory, secondCategory };
-            var cat = string.Join("&", categoryList.Where(c => !string.IsNullOrWhiteSpace(c)));
-
-            var seeders = ParseUtil.CoerceInt(row.QuerySelector("td:nth-of-type(9)").TextContent);
-            var leechers = ParseUtil.CoerceInt(row.QuerySelector("td:nth-of-type(10)").TextContent);
+            var seeders = ParseUtil.CoerceInt(row.QuerySelector("td:nth-of-type(9)")?.TextContent);
+            var leechers = ParseUtil.CoerceInt(row.QuerySelector("td:nth-of-type(10)")?.TextContent);
 
             var release = new TorrentInfo
             {
@@ -291,7 +283,7 @@ public class NorBitsParser : IParseIndexerResponse
                 InfoUrl = details,
                 DownloadUrl = link,
                 Title = title,
-                Categories = _categories.MapTrackerCatToNewznab(cat),
+                Categories = _categories.MapTrackerCatToNewznab(category),
                 Size = ParseUtil.GetBytes(row.QuerySelector("td:nth-of-type(7)")?.TextContent),
                 Files = ParseUtil.CoerceInt(row.QuerySelector("td:nth-of-type(3) > a")?.TextContent.Trim()),
                 Grabs = ParseUtil.CoerceInt(row.QuerySelector("td:nth-of-type(8)")?.FirstChild?.TextContent.Trim()),
@@ -312,8 +304,8 @@ public class NorBitsParser : IParseIndexerResponse
                 release.Genres = genres.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries).ToList();
             }
 
-            var imdbLink = row.QuerySelector("a[href*=\"imdb.com/title/tt\"]")?.GetAttribute("href");
-            release.ImdbId = ParseUtil.GetImdbID(imdbLink) ?? 0;
+            var imdbId = ParseUtil.GetImdbId(row.QuerySelector("a[href*=\"imdb.com/title/tt\"]")?.GetAttribute("href")?.TrimEnd('/')?.Split('/')?.LastOrDefault());
+            release.ImdbId = imdbId ?? 0;
 
             if (row.QuerySelector("img[title=\"100% freeleech\"]") != null)
             {
@@ -344,6 +336,12 @@ public class NorBitsSettings : UserPassTorrentBaseSettings
         UseFullSearch = false;
     }
 
-    [FieldDefinition(4, Label = "Use Full Search", HelpText = "Use Full Search from Site", Type = FieldType.Checkbox)]
+    [FieldDefinition(4, Label = "2FA code", Type = FieldType.Textbox, HelpText = "Only fill in the <b>2FA code</b> box if you have enabled <b>2FA</b> on the NorBits Web Site. Otherwise just leave it empty.")]
+    public string TwoFactorAuthCode { get; set; }
+
+    [FieldDefinition(5, Label = "Use Full Search", Type = FieldType.Checkbox, HelpText = "Use Full Search from Site")]
     public bool UseFullSearch { get; set; }
+
+    [FieldDefinition(6, Label = "FreeLeech Only", Type = FieldType.Checkbox, HelpText = "Search FreeLeech torrents only")]
+    public bool FreeLeechOnly { get; set; }
 }

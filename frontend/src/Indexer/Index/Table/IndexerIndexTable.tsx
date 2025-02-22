@@ -1,8 +1,9 @@
 import { throttle } from 'lodash';
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { RefObject, useEffect, useRef, useState } from 'react';
 import { useSelector } from 'react-redux';
 import { FixedSizeList as List, ListChildComponentProps } from 'react-window';
 import { createSelector } from 'reselect';
+import AppState from 'App/State/AppState';
 import Scroller from 'Components/Scroller/Scroller';
 import Column from 'Components/Table/Column';
 import useMeasure from 'Helpers/Hooks/useMeasure';
@@ -13,7 +14,6 @@ import dimensions from 'Styles/Variables/dimensions';
 import getIndexOfFirstCharacter from 'Utilities/Array/getIndexOfFirstCharacter';
 import IndexerIndexRow from './IndexerIndexRow';
 import IndexerIndexTableHeader from './IndexerIndexTableHeader';
-import selectTableOptions from './selectTableOptions';
 import styles from './IndexerIndexTable.css';
 
 const bodyPadding = parseInt(dimensions.pageContentBodyPadding);
@@ -26,30 +26,28 @@ interface RowItemData {
   sortKey: string;
   columns: Column[];
   isSelectMode: boolean;
+  onCloneIndexerPress(id: number): void;
 }
 
 interface IndexerIndexTableProps {
   items: Indexer[];
-  sortKey?: string;
+  sortKey: string;
   sortDirection?: SortDirection;
   jumpToCharacter?: string;
   scrollTop?: number;
-  scrollerRef: React.MutableRefObject<HTMLElement>;
+  scrollerRef: RefObject<HTMLElement>;
   isSelectMode: boolean;
   isSmallScreen: boolean;
+  onCloneIndexerPress(id: number): void;
 }
 
 const columnsSelector = createSelector(
-  (state) => state.indexerIndex.columns,
+  (state: AppState) => state.indexerIndex.columns,
   (columns) => columns
 );
 
-const Row: React.FC<ListChildComponentProps<RowItemData>> = ({
-  index,
-  style,
-  data,
-}) => {
-  const { items, sortKey, columns, isSelectMode } = data;
+function Row({ index, style, data }: ListChildComponentProps<RowItemData>) {
+  const { items, sortKey, columns, isSelectMode, onCloneIndexerPress } = data;
 
   if (index >= items.length) {
     return null;
@@ -64,16 +62,18 @@ const Row: React.FC<ListChildComponentProps<RowItemData>> = ({
         justifyContent: 'space-between',
         ...style,
       }}
+      className={styles.row}
     >
       <IndexerIndexRow
         indexerId={indexer.id}
         sortKey={sortKey}
         columns={columns}
         isSelectMode={isSelectMode}
+        onCloneIndexerPress={onCloneIndexerPress}
       />
     </div>
   );
-};
+}
 
 function getWindowScrollTopPosition() {
   return document.documentElement.scrollTop || document.body.scrollTop || 0;
@@ -88,22 +88,20 @@ function IndexerIndexTable(props: IndexerIndexTableProps) {
     isSelectMode,
     isSmallScreen,
     scrollerRef,
+    onCloneIndexerPress,
   } = props;
 
   const columns = useSelector(columnsSelector);
-  const { showBanners } = useSelector(selectTableOptions);
-  const listRef: React.MutableRefObject<List> = useRef();
+  const listRef = useRef<List<RowItemData>>(null);
   const [measureRef, bounds] = useMeasure();
   const [size, setSize] = useState({ width: 0, height: 0 });
   const windowWidth = window.innerWidth;
   const windowHeight = window.innerHeight;
 
-  const rowHeight = useMemo(() => {
-    return showBanners ? 70 : 38;
-  }, [showBanners]);
+  const rowHeight = 38;
 
   useEffect(() => {
-    const current = scrollerRef.current as HTMLElement;
+    const current = scrollerRef?.current as HTMLElement;
 
     if (isSmallScreen) {
       setSize({
@@ -127,8 +125,8 @@ function IndexerIndexTable(props: IndexerIndexTableProps) {
   }, [isSmallScreen, windowWidth, windowHeight, scrollerRef, bounds]);
 
   useEffect(() => {
-    const currentScrollListener = isSmallScreen ? window : scrollerRef.current;
-    const currentScrollerRef = scrollerRef.current;
+    const currentScrollerRef = scrollerRef.current as HTMLElement;
+    const currentScrollListener = isSmallScreen ? window : currentScrollerRef;
 
     const handleScroll = throttle(() => {
       const { offsetTop = 0 } = currentScrollerRef;
@@ -137,7 +135,7 @@ function IndexerIndexTable(props: IndexerIndexTableProps) {
           ? getWindowScrollTopPosition()
           : currentScrollerRef.scrollTop) - offsetTop;
 
-      listRef.current.scrollTo(scrollTop);
+      listRef.current?.scrollTo(scrollTop);
     }, 10);
 
     currentScrollListener.addEventListener('scroll', handleScroll);
@@ -166,8 +164,8 @@ function IndexerIndexTable(props: IndexerIndexTableProps) {
           scrollTop += offset;
         }
 
-        listRef.current.scrollTo(scrollTop);
-        scrollerRef.current.scrollTo(0, scrollTop);
+        listRef.current?.scrollTo(scrollTop);
+        scrollerRef?.current?.scrollTo(0, scrollTop);
       }
     }
   }, [jumpToCharacter, rowHeight, items, scrollerRef, listRef]);
@@ -179,7 +177,6 @@ function IndexerIndexTable(props: IndexerIndexTableProps) {
         scrollDirection={ScrollDirection.Horizontal}
       >
         <IndexerIndexTableHeader
-          showBanners={showBanners}
           columns={columns}
           sortKey={sortKey}
           sortDirection={sortDirection}
@@ -201,6 +198,7 @@ function IndexerIndexTable(props: IndexerIndexTableProps) {
             sortKey,
             columns,
             isSelectMode,
+            onCloneIndexerPress,
           }}
         >
           {Row}

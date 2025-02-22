@@ -23,6 +23,11 @@ namespace NzbDrone.Core.Applications.Lidarr
 
     public class LidarrV1Proxy : ILidarrV1Proxy
     {
+        private static Version MinimumApplicationVersion => new (1, 0, 2, 0);
+
+        private const string AppApiRoute = "/api/v1";
+        private const string AppIndexerApiRoute = $"{AppApiRoute}/indexer";
+
         private readonly IHttpClient _httpClient;
         private readonly Logger _logger;
 
@@ -34,13 +39,13 @@ namespace NzbDrone.Core.Applications.Lidarr
 
         public LidarrStatus GetStatus(LidarrSettings settings)
         {
-            var request = BuildRequest(settings, "/api/v1/system/status", HttpMethod.Get);
+            var request = BuildRequest(settings, $"{AppApiRoute}/system/status", HttpMethod.Get);
             return Execute<LidarrStatus>(request);
         }
 
         public List<LidarrIndexer> GetIndexers(LidarrSettings settings)
         {
-            var request = BuildRequest(settings, "/api/v1/indexer", HttpMethod.Get);
+            var request = BuildRequest(settings, $"{AppIndexerApiRoute}", HttpMethod.Get);
             return Execute<List<LidarrIndexer>>(request);
         }
 
@@ -48,7 +53,7 @@ namespace NzbDrone.Core.Applications.Lidarr
         {
             try
             {
-                var request = BuildRequest(settings, $"/api/v1/indexer/{indexerId}", HttpMethod.Get);
+                var request = BuildRequest(settings, $"{AppIndexerApiRoute}/{indexerId}", HttpMethod.Get);
                 return Execute<LidarrIndexer>(request);
             }
             catch (HttpException ex)
@@ -64,81 +69,135 @@ namespace NzbDrone.Core.Applications.Lidarr
 
         public void RemoveIndexer(int indexerId, LidarrSettings settings)
         {
-            var request = BuildRequest(settings, $"/api/v1/indexer/{indexerId}", HttpMethod.Delete);
+            var request = BuildRequest(settings, $"{AppIndexerApiRoute}/{indexerId}", HttpMethod.Delete);
             _httpClient.Execute(request);
         }
 
         public List<LidarrIndexer> GetIndexerSchema(LidarrSettings settings)
         {
-            var request = BuildRequest(settings, "/api/v1/indexer/schema", HttpMethod.Get);
+            var request = BuildRequest(settings, $"{AppIndexerApiRoute}/schema", HttpMethod.Get);
             return Execute<List<LidarrIndexer>>(request);
         }
 
         public LidarrIndexer AddIndexer(LidarrIndexer indexer, LidarrSettings settings)
         {
-            var request = BuildRequest(settings, "/api/v1/indexer", HttpMethod.Post);
+            var request = BuildRequest(settings, $"{AppIndexerApiRoute}", HttpMethod.Post);
 
             request.SetContent(indexer.ToJson());
+            request.ContentSummary = indexer.ToJson(Formatting.None);
 
-            return Execute<LidarrIndexer>(request);
+            try
+            {
+                return ExecuteIndexerRequest(request);
+            }
+            catch (HttpException ex) when (ex.Response.StatusCode == HttpStatusCode.BadRequest)
+            {
+                _logger.Debug("Retrying to add indexer forcefully");
+
+                request.Url = request.Url.AddQueryParam("forceSave", "true");
+
+                return ExecuteIndexerRequest(request);
+            }
         }
 
         public LidarrIndexer UpdateIndexer(LidarrIndexer indexer, LidarrSettings settings)
         {
-            var request = BuildRequest(settings, $"/api/v1/indexer/{indexer.Id}", HttpMethod.Put);
+            var request = BuildRequest(settings, $"{AppIndexerApiRoute}/{indexer.Id}", HttpMethod.Put);
 
             request.SetContent(indexer.ToJson());
+            request.ContentSummary = indexer.ToJson(Formatting.None);
 
-            return Execute<LidarrIndexer>(request);
+            try
+            {
+                return ExecuteIndexerRequest(request);
+            }
+            catch (HttpException ex) when (ex.Response.StatusCode == HttpStatusCode.BadRequest)
+            {
+                _logger.Debug("Retrying to update indexer forcefully");
+
+                request.Url = request.Url.AddQueryParam("forceSave", "true");
+
+                return ExecuteIndexerRequest(request);
+            }
         }
 
         public ValidationFailure TestConnection(LidarrIndexer indexer, LidarrSettings settings)
         {
-            var request = BuildRequest(settings, $"/api/v1/indexer/test", HttpMethod.Post);
+            var request = BuildRequest(settings, $"{AppIndexerApiRoute}/test", HttpMethod.Post);
 
             request.SetContent(indexer.ToJson());
+            request.ContentSummary = indexer.ToJson(Formatting.None);
 
-            try
+            var applicationVersion = _httpClient.Post(request).Headers.GetSingleValue("X-Application-Version");
+
+            if (applicationVersion == null)
             {
-                Execute<LidarrIndexer>(request);
+                return new ValidationFailure(string.Empty, "Failed to fetch Lidarr version");
             }
-            catch (HttpException ex)
+
+            if (new Version(applicationVersion) < MinimumApplicationVersion)
             {
-                if (ex.Response.StatusCode == HttpStatusCode.Unauthorized)
-                {
-                    _logger.Error(ex, "API Key is invalid");
-                    return new ValidationFailure("ApiKey", "API Key is invalid");
-                }
-
-                if (ex.Response.StatusCode == HttpStatusCode.BadRequest)
-                {
-                    _logger.Error(ex, "Prowlarr URL is invalid");
-                    return new ValidationFailure("ProwlarrUrl", "Prowlarr url is invalid, Lidarr cannot connect to Prowlarr");
-                }
-
-                if (ex.Response.StatusCode == HttpStatusCode.SeeOther)
-                {
-                    _logger.Error(ex, "Lidarr returned redirect and is invalid");
-                    return new ValidationFailure("BaseUrl", "Lidarr url is invalid, Prowlarr cannot connect to Lidarr - are you missing a url base?");
-                }
-
-                _logger.Error(ex, "Unable to send test message");
-                return new ValidationFailure("BaseUrl", "Unable to complete application test");
-            }
-            catch (Exception ex)
-            {
-                _logger.Error(ex, "Unable to send test message");
-                return new ValidationFailure("", "Unable to send test message");
+                return new ValidationFailure(string.Empty, $"Lidarr version should be at least {MinimumApplicationVersion.ToString(3)}. Version reported is {applicationVersion}", applicationVersion);
             }
 
             return null;
+        }
+
+        private LidarrIndexer ExecuteIndexerRequest(HttpRequest request)
+        {
+            try
+            {
+                return Execute<LidarrIndexer>(request);
+            }
+            catch (HttpException ex)
+            {
+                switch (ex.Response.StatusCode)
+                {
+                    case HttpStatusCode.Unauthorized:
+                        _logger.Warn(ex, "API Key is invalid");
+                        break;
+                    case HttpStatusCode.BadRequest:
+                        if (ex.Response.Content.Contains("Query successful, but no results in the configured categories were returned from your indexer.", StringComparison.InvariantCultureIgnoreCase))
+                        {
+                            _logger.Warn(ex, "No Results in configured categories. See FAQ Entry: Prowlarr will not sync X Indexer to App");
+                            break;
+                        }
+
+                        _logger.Error(ex, "Invalid Request");
+                        break;
+                    case HttpStatusCode.SeeOther:
+                    case HttpStatusCode.TemporaryRedirect:
+                        _logger.Warn(ex, "App returned redirect and is invalid. Check App URL");
+                        break;
+                    case HttpStatusCode.NotFound:
+                        _logger.Warn(ex, "Remote indexer not found");
+                        break;
+                    default:
+                        _logger.Error(ex, "Unexpected response status code: {0}", ex.Response.StatusCode);
+                        break;
+                }
+
+                throw;
+            }
+            catch (JsonReaderException ex)
+            {
+                _logger.Error(ex, "Unable to parse JSON response from application");
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "Unable to add or update indexer");
+                throw;
+            }
         }
 
         private HttpRequest BuildRequest(LidarrSettings settings, string resource, HttpMethod method)
         {
             var baseUrl = settings.BaseUrl.TrimEnd('/');
 
-            var request = new HttpRequestBuilder(baseUrl).Resource(resource)
+            var request = new HttpRequestBuilder(baseUrl)
+                .Resource(resource)
+                .Accept(HttpAccept.Json)
                 .SetHeader("X-Api-Key", settings.ApiKey)
                 .Build();
 
@@ -155,9 +214,12 @@ namespace NzbDrone.Core.Applications.Lidarr
         {
             var response = _httpClient.Execute(request);
 
-            var results = JsonConvert.DeserializeObject<TResource>(response.Content);
+            if ((int)response.StatusCode >= 300)
+            {
+                throw new HttpException(response);
+            }
 
-            return results;
+            return Json.Deserialize<TResource>(response.Content);
         }
     }
 }

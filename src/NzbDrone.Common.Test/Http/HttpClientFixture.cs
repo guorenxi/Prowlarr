@@ -129,6 +129,16 @@ namespace NzbDrone.Common.Test.Http
         }
 
         [Test]
+        public void should_throw_timeout_request()
+        {
+            var request = new HttpRequest($"https://{_httpBinHost}/delay/10");
+
+            request.RequestTimeout = new TimeSpan(0, 0, 5);
+
+            Assert.ThrowsAsync<WebException>(async () => await Subject.ExecuteAsync(request));
+        }
+
+        [Test]
         public void should_execute_https_get()
         {
             var request = new HttpRequest($"https://{_httpBinHost}/get");
@@ -788,7 +798,7 @@ namespace NzbDrone.Common.Test.Http
             try
             {
                 // the date is bad in the below - should be 13-Jul-2026
-                string malformedCookie = @"__cfduid=d29e686a9d65800021c66faca0a29b4261436890790; expires=Mon, 13-Jul-26 16:19:50 GMT; path=/; HttpOnly";
+                var malformedCookie = @"__cfduid=d29e686a9d65800021c66faca0a29b4261436890790; expires=Mon, 13-Jul-26 16:19:50 GMT; path=/; HttpOnly";
                 var requestSet = new HttpRequestBuilder($"https://{_httpBinHost}/response-headers")
                     .AddQueryParam("Set-Cookie", malformedCookie)
                     .Build();
@@ -822,7 +832,7 @@ namespace NzbDrone.Common.Test.Http
         {
             try
             {
-                string url = $"https://{_httpBinHost}/response-headers?Set-Cookie={Uri.EscapeDataString(malformedCookie)}";
+                var url = $"https://{_httpBinHost}/response-headers?Set-Cookie={Uri.EscapeDataString(malformedCookie)}";
 
                 var requestSet = new HttpRequest(url);
                 requestSet.AllowAutoRedirect = false;

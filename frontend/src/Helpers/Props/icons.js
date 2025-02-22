@@ -43,6 +43,7 @@ import {
   faChevronCircleRight as fasChevronCircleRight,
   faChevronCircleUp as fasChevronCircleUp,
   faCircle as fasCircle,
+  faCircleDown as fasCircleDown,
   faCloud as fasCloud,
   faCloudDownloadAlt as fasCloudDownloadAlt,
   faCog as fasCog,
@@ -72,8 +73,10 @@ import {
   faLanguage as fasLanguage,
   faLaptop as fasLaptop,
   faLevelUpAlt as fasLevelUpAlt,
+  faListCheck as fasListCheck,
   faLocationArrow as fasLocationArrow,
   faLock as fasLock,
+  faMagnet as fasMagnet,
   faMedkit as fasMedkit,
   faMinus as fasMinus,
   faMusic as fasMusic,
@@ -139,6 +142,7 @@ export const CHECK_INDETERMINATE = fasMinus;
 export const CHECK_CIRCLE = fasCheckCircle;
 export const CHECK_SQUARE = fasSquareCheck;
 export const CIRCLE = fasCircle;
+export const CIRCLE_DOWN = fasCircleDown;
 export const CIRCLE_OUTLINE = farCircle;
 export const CLEAR = fasTrashAlt;
 export const CLIPBOARD = fasCopy;
@@ -180,6 +184,8 @@ export const INTERACTIVE = fasUser;
 export const KEYBOARD = farKeyboard;
 export const LOCK = fasLock;
 export const LOGOUT = fasSignOutAlt;
+export const MAGNET = fasMagnet;
+export const MANAGE = fasListCheck;
 export const MEDIA_INFO = farFileInvoice;
 export const MISSING = fasExclamationTriangle;
 export const MONITORED = fasBookmark;

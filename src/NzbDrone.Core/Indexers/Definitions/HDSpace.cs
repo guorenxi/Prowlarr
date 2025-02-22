@@ -3,14 +3,13 @@ using System.Collections.Generic;
 using System.Collections.Specialized;
 using System.Linq;
 using System.Net;
-using System.Net.Http;
 using System.Text;
-using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using AngleSharp.Html.Parser;
 using NLog;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Http;
+using NzbDrone.Core.Annotations;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Indexers.Exceptions;
 using NzbDrone.Core.Indexers.Settings;
@@ -21,17 +20,16 @@ using NzbDrone.Core.Parser.Model;
 
 namespace NzbDrone.Core.Indexers.Definitions
 {
-    public class HDSpace : TorrentIndexerBase<UserPassTorrentBaseSettings>
+    [Obsolete("Moved to YML for Cardigann")]
+    public class HDSpace : TorrentIndexerBase<HDSpaceSettings>
     {
         public override string Name => "HD-Space";
         public override string[] IndexerUrls => new[] { "https://hd-space.org/" };
         public override string Description => "HD-Space (HDS) is a Private Torrent Tracker for HD MOVIES / TV";
         public override string Language => "en-US";
         public override Encoding Encoding => Encoding.UTF8;
-        public override DownloadProtocol Protocol => DownloadProtocol.Torrent;
         public override IndexerPrivacy Privacy => IndexerPrivacy.Private;
         public override IndexerCapabilities Capabilities => SetCapabilities();
-        private string LoginUrl => Settings.BaseUrl + "index.php?page=login";
 
         public HDSpace(IIndexerHttpClient httpClient, IEventAggregator eventAggregator, IIndexerStatusService indexerStatusService, IConfigService configService, Logger logger)
             : base(httpClient, eventAggregator, indexerStatusService, configService, logger)
@@ -50,37 +48,41 @@ namespace NzbDrone.Core.Indexers.Definitions
 
         protected override async Task DoLogin()
         {
-            var loginPage = await ExecuteAuth(new HttpRequest(LoginUrl));
+            var loginUrl = Settings.BaseUrl + "index.php?page=login";
 
-            var requestBuilder = new HttpRequestBuilder(LoginUrl)
+            var loginPage = await ExecuteAuth(new HttpRequest(loginUrl));
+
+            var requestBuilder = new HttpRequestBuilder(loginUrl)
             {
                 LogResponseContent = true,
-                AllowAutoRedirect = true,
-                Method = HttpMethod.Post
+                AllowAutoRedirect = true
             };
 
             var cookies = Cookies;
             Cookies = null;
 
             var authLoginRequest = requestBuilder
+                .Post()
                 .AddFormParameter("uid", Settings.Username)
                 .AddFormParameter("pwd", Settings.Password)
                 .SetCookies(loginPage.GetCookies())
                 .SetHeader("Content-Type", "application/x-www-form-urlencoded")
-                .SetHeader("Referer", LoginUrl)
+                .SetHeader("Referer", loginUrl)
                 .Build();
 
             var response = await ExecuteAuth(authLoginRequest);
 
             if (CheckIfLoginNeeded(response))
             {
-                var errorStr = "Login Failed: You have {0} remaining login attempts";
-                var remainingAttemptSpan = new Regex(string.Format(errorStr, "(.*?)"))
-                                           .Match(loginPage.Content).Groups[1].ToString();
-                var attempts = Regex.Replace(remainingAttemptSpan, "<.*?>", string.Empty);
-                var errorMessage = string.Format(errorStr, attempts);
+                var parser = new HtmlParser();
+                using var dom = parser.ParseDocument(response.Content);
+                var errorMessages = dom
+                    .QuerySelectorAll("table.lista td.lista span[style*=\"#FF0000\"], table.lista td.header:contains(\"login attempts\")")
+                    .Select(r => r.TextContent.Trim())
+                    .Where(m => m.IsNotNullOrWhiteSpace())
+                    .ToArray();
 
-                throw new IndexerAuthException(errorMessage);
+                throw new IndexerAuthException(errorMessages.Any() ? errorMessages.Join(" ") : "Unknown error message, please report.");
             }
 
             cookies = response.GetCookies();
@@ -91,7 +93,7 @@ namespace NzbDrone.Core.Indexers.Definitions
 
         protected override bool CheckIfLoginNeeded(HttpResponse httpResponse)
         {
-            return !httpResponse.Content.Contains("logout.php");
+            return !httpResponse.Content.Contains("logout.php") && !httpResponse.Content.Contains("Rank: Parked");
         }
 
         private IndexerCapabilities SetCapabilities()
@@ -225,10 +227,10 @@ namespace NzbDrone.Core.Indexers.Definitions
 
     public class HDSpaceParser : IParseIndexerResponse
     {
-        private readonly UserPassTorrentBaseSettings _settings;
+        private readonly HDSpaceSettings _settings;
         private readonly IndexerCapabilitiesCategories _categories;
 
-        public HDSpaceParser(UserPassTorrentBaseSettings settings, IndexerCapabilitiesCategories categories)
+        public HDSpaceParser(HDSpaceSettings settings, IndexerCapabilitiesCategories categories)
         {
             _settings = settings;
             _categories = categories;
@@ -251,9 +253,34 @@ namespace NzbDrone.Core.Indexers.Definitions
                     continue;
                 }
 
-                var release = new TorrentInfo();
-                release.MinimumRatio = 1;
-                release.MinimumSeedTime = 86400; // 24 hours
+                var downloadVolumeFactor = 1.0;
+
+                if (row.QuerySelector("img[title=\"FreeLeech\"]") != null)
+                {
+                    downloadVolumeFactor = 0;
+                }
+                else if (row.QuerySelector("img[src=\"images/sf.png\"]") != null)
+                {
+                    downloadVolumeFactor = 0;
+                }
+                else if (row.QuerySelector("img[title=\"Half FreeLeech\"]") != null)
+                {
+                    downloadVolumeFactor = 0.5;
+                }
+
+                // Skip non-freeleech results when freeleech only is set
+                if (_settings.FreeleechOnly && downloadVolumeFactor != 0.0)
+                {
+                    continue;
+                }
+
+                var release = new TorrentInfo
+                {
+                    DownloadVolumeFactor = downloadVolumeFactor,
+                    UploadVolumeFactor = 1,
+                    MinimumRatio = 1,
+                    MinimumSeedTime = 86400 // 24 hours
+                };
 
                 var qLink = row.QuerySelector("td:nth-child(2) a[href^=\"index.php?page=torrent-details&id=\"]");
                 release.Title = qLink?.TextContent.Trim();
@@ -281,7 +308,7 @@ namespace NzbDrone.Core.Indexers.Definitions
                 var imdbLink = row.QuerySelector("td:nth-child(2) a[href*=imdb]");
                 if (imdbLink != null)
                 {
-                    release.ImdbId = ParseUtil.GetImdbID(imdbLink.GetAttribute("href").Split('/').Last()).GetValueOrDefault();
+                    release.ImdbId = ParseUtil.GetImdbId(imdbLink.GetAttribute("href").Split('/').Last()).GetValueOrDefault();
                 }
 
                 //"July 11, 2015, 13:34:09", "Today|Yesterday at 20:04:23"
@@ -291,25 +318,6 @@ namespace NzbDrone.Core.Indexers.Definitions
                 release.Peers = ParseUtil.CoerceInt(row.QuerySelector("td:nth-child(9)")?.TextContent) + release.Seeders;
                 var grabs = row.QuerySelector("td:nth-child(10)")?.TextContent.Trim().Replace("---", "0");
                 release.Grabs = ParseUtil.CoerceInt(grabs);
-
-                if (row.QuerySelector("img[title=\"FreeLeech\"]") != null)
-                {
-                    release.DownloadVolumeFactor = 0;
-                }
-                else if (row.QuerySelector("img[src=\"images/sf.png\"]") != null)
-                {
-                    release.DownloadVolumeFactor = 0;
-                }
-                else if (row.QuerySelector("img[title=\"Half FreeLeech\"]") != null)
-                {
-                    release.DownloadVolumeFactor = 0.5;
-                }
-                else
-                {
-                    release.DownloadVolumeFactor = 1;
-                }
-
-                release.UploadVolumeFactor = 1;
 
                 var categoryLink = row.QuerySelector("a[href^=\"index.php?page=torrents&category=\"]").GetAttribute("href");
                 var cat = ParseUtil.GetArgumentFromQueryString(categoryLink, "category");
@@ -322,5 +330,11 @@ namespace NzbDrone.Core.Indexers.Definitions
         }
 
         public Action<IDictionary<string, string>, DateTime?> CookiesUpdater { get; set; }
+    }
+
+    public class HDSpaceSettings : UserPassTorrentBaseSettings
+    {
+        [FieldDefinition(4, Label = "Freeleech Only", Type = FieldType.Checkbox, HelpText = "Show freeleech releases only")]
+        public bool FreeleechOnly { get; set; } = false;
     }
 }

@@ -24,23 +24,26 @@ class SearchFooter extends Component {
     super(props, context);
 
     const {
+      defaultSearchQueryParams,
       defaultIndexerIds,
       defaultCategories,
       defaultSearchQuery,
-      defaultSearchType
+      defaultSearchType,
+      defaultSearchLimit,
+      defaultSearchOffset
     } = props;
 
     this.state = {
-      isQueryParameterModalOpen: false,
-      queryModalOptions: null,
-      searchType: defaultSearchType,
+      searchIndexerIds: defaultSearchQueryParams.searchIndexerIds ?? defaultIndexerIds,
+      searchCategories: defaultSearchQueryParams.searchCategories ?? defaultCategories,
+      searchQuery: (defaultSearchQueryParams.searchQuery ?? defaultSearchQuery) || '',
+      searchType: defaultSearchQueryParams.searchType ?? defaultSearchType,
+      searchLimit: defaultSearchQueryParams.searchLimit ?? defaultSearchLimit,
+      searchOffset: defaultSearchQueryParams.searchOffset ?? defaultSearchOffset,
+      newSearch: true,
       searchingReleases: false,
-      searchQuery: defaultSearchQuery || '',
-      searchIndexerIds: defaultIndexerIds,
-      searchCategories: defaultCategories,
-      searchLimit: 100,
-      searchOffset: 0,
-      newSearch: true
+      isQueryParameterModalOpen: false,
+      queryModalOptions: null
     };
   }
 
@@ -55,7 +58,9 @@ class SearchFooter extends Component {
       this.onSearchPress();
     }
 
-    this.props.bindShortcut('enter', this.onSearchPress, { isGlobal: true });
+    setTimeout(() => {
+      this.props.bindShortcut('enter', this.onSearchPress, { isGlobal: true });
+    });
   }
 
   componentDidUpdate(prevProps) {
@@ -78,6 +83,8 @@ class SearchFooter extends Component {
 
     if (defaultSearchQuery && defaultSearchQuery !== prevProps.defaultSearchQuery) {
       newState.searchQuery = defaultSearchQuery;
+      newState.searchOffset = 0;
+      newState.newSearch = true;
     }
 
     if (searchType !== defaultSearchType) {
@@ -118,7 +125,6 @@ class SearchFooter extends Component {
   };
 
   onSearchPress = () => {
-
     const {
       searchLimit,
       searchOffset,
@@ -184,12 +190,13 @@ class SearchFooter extends Component {
         break;
       default:
         icon = icons.SEARCH;
+        break;
     }
 
-    let footerLabel = `Search ${searchIndexerIds.length === 0 ? 'all' : searchIndexerIds.length} Indexers`;
+    let footerLabel = searchIndexerIds.length === 0 ? translate('SearchAllIndexers') : translate('SearchCountIndexers', { count: searchIndexerIds.length });
 
     if (isPopulated) {
-      footerLabel = selectedCount === 0 ? `Found ${itemCount} releases` : `Selected ${selectedCount} of ${itemCount} releases`;
+      footerLabel = selectedCount === 0 ? translate('FoundCountReleases', { itemCount }) : translate('SelectedCountOfCountReleases', { selectedCount, itemCount });
     }
 
     return (
@@ -205,7 +212,11 @@ class SearchFooter extends Component {
             name="searchQuery"
             value={searchQuery}
             buttons={
-              <FormInputButton onPress={this.onQueryParameterModalOpenClick}>
+              <FormInputButton
+                kind={kinds.DEFAULT}
+                onPress={this.onQueryParameterModalOpenClick}
+                title={translate('ClickToChangeQueryOptions')}
+              >
                 <Icon
                   name={icon}
                 />
@@ -254,11 +265,10 @@ class SearchFooter extends Component {
             />
 
             <div className={styles.buttons}>
-
               {
                 isPopulated &&
                   <SpinnerButton
-                    className={styles.searchButton}
+                    className={styles.grabReleasesButton}
                     kind={kinds.SUCCESS}
                     isSpinning={isGrabbing}
                     isDisabled={isFetching || !hasIndexers || selectedCount === 0}
@@ -269,6 +279,7 @@ class SearchFooter extends Component {
               }
 
               <SpinnerButton
+                kind={kinds.PRIMARY}
                 className={styles.searchButton}
                 isSpinning={isFetching}
                 isDisabled={isFetching || !hasIndexers}
@@ -296,10 +307,13 @@ class SearchFooter extends Component {
 }
 
 SearchFooter.propTypes = {
+  defaultSearchQueryParams: PropTypes.object.isRequired,
   defaultIndexerIds: PropTypes.arrayOf(PropTypes.number).isRequired,
   defaultCategories: PropTypes.arrayOf(PropTypes.number).isRequired,
   defaultSearchQuery: PropTypes.string.isRequired,
   defaultSearchType: PropTypes.string.isRequired,
+  defaultSearchLimit: PropTypes.number.isRequired,
+  defaultSearchOffset: PropTypes.number.isRequired,
   selectedCount: PropTypes.number.isRequired,
   itemCount: PropTypes.number.isRequired,
   isFetching: PropTypes.bool.isRequired,

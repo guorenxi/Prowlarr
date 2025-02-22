@@ -91,6 +91,7 @@ namespace NzbDrone.Common.Http
                     {
                         request.Method = HttpMethod.Get;
                         request.ContentData = null;
+                        request.ContentSummary = null;
                     }
 
                     // Save to add to final response
@@ -108,7 +109,7 @@ namespace NzbDrone.Common.Http
 
             if (response.HasHttpRedirect && !RuntimeInfo.IsProduction)
             {
-                _logger.Error("Server requested a redirect to [{0}] while in developer mode. Update the request URL to avoid this redirect.", response.Headers["Location"]);
+                _logger.Error("Server requested a redirect to [{0}] while in developer mode. Update the request URL to avoid this redirect.", response.RedirectUrl);
             }
 
             if (!request.SuppressHttpError && response.HasHttpError && (request.SuppressHttpErrorStatusCodes == null || !request.SuppressHttpErrorStatusCodes.Contains(response.StatusCode)))
@@ -220,11 +221,18 @@ namespace NzbDrone.Common.Http
                             };
                         }
 
-                        sourceContainer.Add((Uri)request.Url, cookie);
-
-                        if (request.StoreRequestCookie)
+                        try
                         {
-                            presistentContainer.Add((Uri)request.Url, cookie);
+                            sourceContainer.Add((Uri)request.Url, cookie);
+
+                            if (request.StoreRequestCookie)
+                            {
+                                presistentContainer.Add((Uri)request.Url, cookie);
+                            }
+                        }
+                        catch (CookieException ex)
+                        {
+                            _logger.Debug(ex, "Invalid cookie in {0}", (Uri)request.Url);
                         }
                     }
                 }
@@ -259,7 +267,14 @@ namespace NzbDrone.Common.Http
                         };
                     }
 
-                    sourceContainer.Add((Uri)request.Url, cookie);
+                    try
+                    {
+                        sourceContainer.Add((Uri)request.Url, cookie);
+                    }
+                    catch (CookieException ex)
+                    {
+                        _logger.Debug(ex, "Invalid cookie in {0}", (Uri)request.Url);
+                    }
                 }
             }
 
@@ -322,11 +337,12 @@ namespace NzbDrone.Common.Http
                 _logger.Debug("Downloading [{0}] to [{1}]", url, fileName);
 
                 var stopWatch = Stopwatch.StartNew();
-                using (var fileStream = new FileStream(fileNamePart, FileMode.Create, FileAccess.ReadWrite))
+                await using (var fileStream = new FileStream(fileNamePart, FileMode.Create, FileAccess.ReadWrite))
                 {
                     var request = new HttpRequest(url);
                     request.AllowAutoRedirect = true;
                     request.ResponseStream = fileStream;
+                    request.RequestTimeout = TimeSpan.FromSeconds(300);
                     var response = await GetAsync(request);
 
                     if (response.Headers.ContentType != null && response.Headers.ContentType.Contains("text/html"))

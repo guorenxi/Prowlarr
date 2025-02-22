@@ -26,7 +26,6 @@ public class FunFile : TorrentIndexerBase<UserPassTorrentBaseSettings>
     public override string Description => "FunFile is a general tracker";
     public override string Language => "en-US";
     public override Encoding Encoding => Encoding.GetEncoding("iso-8859-1");
-    public override DownloadProtocol Protocol => DownloadProtocol.Torrent;
     public override IndexerPrivacy Privacy => IndexerPrivacy.Private;
     public override IndexerCapabilities Capabilities => SetCapabilities();
 
@@ -71,7 +70,7 @@ public class FunFile : TorrentIndexerBase<UserPassTorrentBaseSettings>
         if (CheckIfLoginNeeded(response))
         {
             var parser = new HtmlParser();
-            var dom = parser.ParseDocument(response.Content);
+            using var dom = await parser.ParseDocumentAsync(response.Content);
             var errorMessage = dom.QuerySelector("td.mf_content")?.TextContent.Trim();
 
             throw new IndexerAuthException(errorMessage ?? "Unknown error message, please report.");
@@ -277,7 +276,7 @@ public class FunFileParser : IParseIndexerResponse
         var releaseInfos = new List<TorrentInfo>();
 
         var parser = new HtmlParser();
-        var dom = parser.ParseDocument(indexerResponse.Content);
+        using var dom = parser.ParseDocument(indexerResponse.Content);
 
         var rows = dom.QuerySelectorAll("table.mainframe table[cellpadding=\"2\"] > tbody > tr:has(td.row3)");
         foreach (var row in rows)

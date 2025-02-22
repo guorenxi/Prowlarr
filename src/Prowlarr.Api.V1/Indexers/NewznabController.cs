@@ -9,6 +9,7 @@ using System.Xml.Linq;
 using Microsoft.AspNetCore.Cors;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using NLog;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Http;
 using NzbDrone.Core.Download;
@@ -29,25 +30,28 @@ namespace NzbDrone.Api.V1.Indexers
     public class NewznabController : Controller
     {
         private IIndexerFactory _indexerFactory { get; set; }
-        private ISearchForNzb _nzbSearchService { get; set; }
+        private IReleaseSearchService _releaseSearchService { get; set; }
         private IIndexerLimitService _indexerLimitService { get; set; }
         private IIndexerStatusService _indexerStatusService;
         private IDownloadMappingService _downloadMappingService { get; set; }
         private IDownloadService _downloadService { get; set; }
+        private readonly Logger _logger;
 
         public NewznabController(IndexerFactory indexerFactory,
-            ISearchForNzb nzbSearchService,
+            IReleaseSearchService releaseSearchService,
             IIndexerLimitService indexerLimitService,
             IIndexerStatusService indexerStatusService,
             IDownloadMappingService downloadMappingService,
-            IDownloadService downloadService)
+            IDownloadService downloadService,
+            Logger logger)
         {
             _indexerFactory = indexerFactory;
-            _nzbSearchService = nzbSearchService;
+            _releaseSearchService = releaseSearchService;
             _indexerLimitService = indexerLimitService;
             _indexerStatusService = indexerStatusService;
             _downloadMappingService = downloadMappingService;
             _downloadService = downloadService;
+            _logger = logger;
         }
 
         [HttpGet("/api/v1/indexer/{id:int}/newznab")]
@@ -82,21 +86,21 @@ namespace NzbDrone.Api.V1.Indexers
                         var caps = new IndexerCapabilities
                         {
                             TvSearchParams = new List<TvSearchParam>
-                                   {
-                                       TvSearchParam.Q, TvSearchParam.Season, TvSearchParam.Ep
-                                   },
+                            {
+                                TvSearchParam.Q, TvSearchParam.Season, TvSearchParam.Ep
+                            },
                             MovieSearchParams = new List<MovieSearchParam>
-                                   {
-                                       MovieSearchParam.Q
-                                   },
+                            {
+                                MovieSearchParam.Q
+                            },
                             MusicSearchParams = new List<MusicSearchParam>
-                                   {
-                                       MusicSearchParam.Q
-                                   },
+                            {
+                                MusicSearchParam.Q
+                            },
                             BookSearchParams = new List<BookSearchParam>
-                                   {
-                                       BookSearchParam.Q
-                                   }
+                            {
+                                BookSearchParam.Q
+                            }
                         };
 
                         foreach (var cat in NewznabStandardCategory.AllCats)
@@ -142,23 +146,25 @@ namespace NzbDrone.Api.V1.Indexers
 
             var indexer = _indexerFactory.GetInstance(indexerDef);
 
-            var blockedIndexerStatus = GetBlockedIndexerStatus(indexer);
+            var blockedIndexerStatusPre = GetBlockedIndexerStatus(indexer);
 
-            if (blockedIndexerStatus?.DisabledTill != null)
+            if (blockedIndexerStatusPre?.DisabledTill != null)
             {
-                var retryAfterDisabledTill = Convert.ToInt32(blockedIndexerStatus.DisabledTill.Value.ToLocalTime().Subtract(DateTime.Now).TotalSeconds);
-                AddRetryAfterHeader(retryAfterDisabledTill);
+                AddRetryAfterHeader(CalculateRetryAfterDisabledTill(blockedIndexerStatusPre.DisabledTill.Value));
 
-                return CreateResponse(CreateErrorXML(429, $"Indexer is disabled till {blockedIndexerStatus.DisabledTill.Value.ToLocalTime()} due to recent failures."), statusCode: StatusCodes.Status429TooManyRequests);
+                return CreateResponse(CreateErrorXML(429, $"Indexer is disabled till {blockedIndexerStatusPre.DisabledTill.Value.ToLocalTime()} due to recent failures."), statusCode: StatusCodes.Status429TooManyRequests);
             }
 
-            //TODO Optimize this so it's not called here and in NzbSearchService (for manual search)
+            // TODO Optimize this so it's not called here and in ReleaseSearchService (for manual search)
             if (_indexerLimitService.AtQueryLimit(indexerDef))
             {
                 var retryAfterQueryLimit = _indexerLimitService.CalculateRetryAfterQueryLimit(indexerDef);
                 AddRetryAfterHeader(retryAfterQueryLimit);
 
-                return CreateResponse(CreateErrorXML(429, $"User configurable Indexer Query Limit of {((IIndexerSettings)indexer.Definition.Settings).BaseSettings.QueryLimit} reached."), statusCode: StatusCodes.Status429TooManyRequests);
+                var queryLimit = ((IIndexerSettings)indexer.Definition.Settings).BaseSettings.QueryLimit;
+                var intervalLimitHours = _indexerLimitService.CalculateIntervalLimitHours(indexerDef);
+
+                return CreateResponse(CreateErrorXML(429, $"User configurable Indexer Query Limit of {queryLimit} in last {intervalLimitHours} hour(s) reached."), statusCode: StatusCodes.Status429TooManyRequests);
             }
 
             switch (requestType)
@@ -171,7 +177,16 @@ namespace NzbDrone.Api.V1.Indexers
                 case "music":
                 case "book":
                 case "movie":
-                    var results = await _nzbSearchService.Search(request, new List<int> { indexerDef.Id }, false);
+                    var results = await _releaseSearchService.Search(request, new List<int> { indexerDef.Id }, false);
+
+                    var blockedIndexerStatusPost = GetBlockedIndexerStatus(indexer);
+
+                    if (blockedIndexerStatusPost?.DisabledTill != null)
+                    {
+                        AddRetryAfterHeader(CalculateRetryAfterDisabledTill(blockedIndexerStatusPost.DisabledTill.Value));
+
+                        return CreateResponse(CreateErrorXML(429, $"Indexer is disabled till {blockedIndexerStatusPost.DisabledTill.Value.ToLocalTime()} due to recent failures."), statusCode: StatusCodes.Status429TooManyRequests);
+                    }
 
                     foreach (var result in results.Releases)
                     {
@@ -183,7 +198,9 @@ namespace NzbDrone.Api.V1.Indexers
                         }
                     }
 
-                    return CreateResponse(results.ToXml(indexer.Protocol));
+                    var preferMagnetUrl = indexer.Protocol == DownloadProtocol.Torrent && indexerDef.Settings is ITorrentIndexerSettings torrentIndexerSettings && (torrentIndexerSettings.TorrentBaseSettings?.PreferMagnetUrl ?? false);
+
+                    return CreateResponse(results.ToXml(indexer.Protocol, preferMagnetUrl));
                 default:
                     return CreateResponse(CreateErrorXML(202, $"No such function ({requestType})"), statusCode: StatusCodes.Status400BadRequest);
             }
@@ -222,7 +239,10 @@ namespace NzbDrone.Api.V1.Indexers
                 var retryAfterDownloadLimit = _indexerLimitService.CalculateRetryAfterDownloadLimit(indexerDef);
                 AddRetryAfterHeader(retryAfterDownloadLimit);
 
-                return CreateResponse(CreateErrorXML(429, $"User configurable Indexer Grab Limit of {((IIndexerSettings)indexer.Definition.Settings).BaseSettings.GrabLimit} reached."), statusCode: StatusCodes.Status429TooManyRequests);
+                var grabLimit = ((IIndexerSettings)indexer.Definition.Settings).BaseSettings.GrabLimit;
+                var intervalLimitHours = _indexerLimitService.CalculateIntervalLimitHours(indexerDef);
+
+                return CreateResponse(CreateErrorXML(429, $"User configurable Indexer Grab Limit of {grabLimit} in last {intervalLimitHours} hour(s) reached."), statusCode: StatusCodes.Status429TooManyRequests);
             }
 
             if (link.IsNullOrWhiteSpace() || file.IsNullOrWhiteSpace())
@@ -235,20 +255,25 @@ namespace NzbDrone.Api.V1.Indexers
             var source = Request.GetSource();
             var host = Request.GetHostName();
 
-            var unprotectedlLink = _downloadMappingService.ConvertToNormalLink(link);
+            var unprotectedLink = _downloadMappingService.ConvertToNormalLink(link);
+
+            if (unprotectedLink.IsNullOrWhiteSpace())
+            {
+                throw new BadRequestException("Failed to normalize provided link");
+            }
 
             // If Indexer is set to download via Redirect then just redirect to the link
             if (indexer.SupportsRedirect && indexerDef.Redirect)
             {
-                _downloadService.RecordRedirect(unprotectedlLink, id, source, host, file);
-                return RedirectPermanent(unprotectedlLink);
+                _downloadService.RecordRedirect(unprotectedLink, id, source, host, file);
+                return RedirectPermanent(unprotectedLink);
             }
 
             byte[] downloadBytes;
 
             try
             {
-                downloadBytes = await _downloadService.DownloadReport(unprotectedlLink, id, source, host, file);
+                downloadBytes = await _downloadService.DownloadReport(unprotectedLink, id, source, host, file);
             }
             catch (ReleaseUnavailableException ex)
             {
@@ -263,6 +288,8 @@ namespace NzbDrone.Api.V1.Indexers
             }
             catch (Exception ex)
             {
+                _logger.Error(ex);
+
                 return CreateResponse(CreateErrorXML(500, ex.Message), statusCode: StatusCodes.Status500InternalServerError);
             }
 
@@ -314,7 +341,7 @@ namespace NzbDrone.Api.V1.Indexers
         {
             var blockedIndexers = _indexerStatusService.GetBlockedProviders().ToDictionary(v => v.ProviderId, v => v);
 
-            return blockedIndexers.TryGetValue(indexer.Definition.Id, out var blockedIndexerStatus) ? blockedIndexerStatus : null;
+            return blockedIndexers.GetValueOrDefault(indexer.Definition.Id);
         }
 
         private void AddRetryAfterHeader(int retryAfterSeconds)
@@ -323,6 +350,11 @@ namespace NzbDrone.Api.V1.Indexers
             {
                 HttpContext.Response.Headers.Add("Retry-After", $"{retryAfterSeconds}");
             }
+        }
+
+        private static int CalculateRetryAfterDisabledTill(DateTime disabledTill)
+        {
+            return Convert.ToInt32(disabledTill.ToLocalTime().Subtract(DateTime.Now).TotalSeconds);
         }
     }
 }
