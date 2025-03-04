@@ -1,13 +1,14 @@
+using System;
+using System.Linq;
 using System.Threading;
 using NLog;
 using NUnit.Framework;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.Datastore.Migration.Framework;
-using NzbDrone.Core.Indexers.Definitions.FileList;
+using NzbDrone.Core.Indexers.Newznab;
 using NzbDrone.Test.Common;
 using NzbDrone.Test.Common.Datastore;
-using Prowlarr.Http.ClientSchema;
 
 namespace NzbDrone.Integration.Test
 {
@@ -47,17 +48,21 @@ namespace NzbDrone.Integration.Test
 
         protected override void InitializeTestTarget()
         {
-            WaitForCompletion(() => Tasks.All().SelectList(x => x.TaskName).Contains("CheckHealth"));
+            WaitForCompletion(() => Tasks.All().SelectList(x => x.TaskName).Contains("CheckHealth"), 20000);
 
-            Indexers.Post(new Prowlarr.Api.V1.Indexers.IndexerResource
+            var indexer = Indexers.Schema().FirstOrDefault(i => i.Implementation == nameof(Newznab));
+
+            if (indexer == null)
             {
-                Enable = false,
-                ConfigContract = nameof(FileListSettings),
-                Implementation = nameof(FileList),
-                Name = "NewznabTest",
-                Protocol = Core.Indexers.DownloadProtocol.Usenet,
-                Fields = SchemaBuilder.ToSchema(new FileListSettings())
-            });
+                throw new NullReferenceException("Expected valid indexer schema, found null");
+            }
+
+            indexer.Enable = false;
+            indexer.ConfigContract = nameof(NewznabSettings);
+            indexer.Implementation = nameof(Newznab);
+            indexer.Name = "NewznabTest";
+            indexer.Protocol = Core.Indexers.DownloadProtocol.Usenet;
+            indexer.AppProfileId = 1;
 
             // Change Console Log Level to Debug so we get more details.
             var config = HostConfig.Get(1);

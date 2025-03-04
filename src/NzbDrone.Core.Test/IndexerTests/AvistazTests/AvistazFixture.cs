@@ -22,10 +22,10 @@ namespace NzbDrone.Core.Test.IndexerTests.AvistazTests
         [SetUp]
         public void Setup()
         {
-            Subject.Definition = new IndexerDefinition()
+            Subject.Definition = new IndexerDefinition
             {
                 Name = "AvistaZ",
-                Settings = new AvistazSettings() { Username = "someuser", Password = "somepass", Pid = "somepid" }
+                Settings = new AvistazSettings { Username = "someuser", Password = "somepass", Pid = "somepid" }
             };
         }
 
@@ -38,7 +38,7 @@ namespace NzbDrone.Core.Test.IndexerTests.AvistazTests
                 .Setup(o => o.ExecuteProxiedAsync(It.Is<HttpRequest>(v => v.Method == HttpMethod.Get), Subject.Definition))
                 .Returns<HttpRequest, IndexerDefinition>((r, d) => Task.FromResult(new HttpResponse(r, new HttpHeader { { "Content-Type", "application/json" } }, new CookieCollection(), recentFeed)));
 
-            var releases = (await Subject.Fetch(new MovieSearchCriteria { Categories = new int[] { 2000 } })).Releases;
+            var releases = (await Subject.Fetch(new MovieSearchCriteria { Categories = new[] { 2000 } })).Releases;
 
             releases.Should().HaveCount(100);
             releases.First().Should().BeOfType<TorrentInfo>();

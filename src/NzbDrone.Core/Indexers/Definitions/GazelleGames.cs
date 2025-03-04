@@ -1,13 +1,17 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.Linq;
 using System.Net;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using FluentValidation;
 using FluentValidation.Results;
+using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using NLog;
+using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Http;
 using NzbDrone.Common.Serializer;
 using NzbDrone.Core.Annotations;
@@ -16,6 +20,7 @@ using NzbDrone.Core.Indexers.Exceptions;
 using NzbDrone.Core.Indexers.Settings;
 using NzbDrone.Core.IndexerSearch.Definitions;
 using NzbDrone.Core.Messaging.Events;
+using NzbDrone.Core.Parser;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.Validation;
 
@@ -24,11 +29,10 @@ namespace NzbDrone.Core.Indexers.Definitions
     public class GazelleGames : TorrentIndexerBase<GazelleGamesSettings>
     {
         public override string Name => "GazelleGames";
-        public override string[] IndexerUrls => new string[] { "https://gazellegames.net/" };
+        public override string[] IndexerUrls => new[] { "https://gazellegames.net/" };
         public override string Description => "GazelleGames (GGn) is a Private Torrent Tracker for GAMES";
         public override string Language => "en-US";
         public override Encoding Encoding => Encoding.UTF8;
-        public override DownloadProtocol Protocol => DownloadProtocol.Torrent;
         public override IndexerPrivacy Privacy => IndexerPrivacy.Private;
         public override IndexerCapabilities Capabilities => SetCapabilities();
 
@@ -39,7 +43,7 @@ namespace NzbDrone.Core.Indexers.Definitions
 
         public override IIndexerRequestGenerator GetRequestGenerator()
         {
-            return new GazelleGamesRequestGenerator() { Settings = Settings, Capabilities = Capabilities, HttpClient = _httpClient };
+            return new GazelleGamesRequestGenerator(Settings, Capabilities);
         }
 
         public override IParseIndexerResponse GetParser()
@@ -49,14 +53,13 @@ namespace NzbDrone.Core.Indexers.Definitions
 
         private IndexerCapabilities SetCapabilities()
         {
-            var caps = new IndexerCapabilities
-            {
-            };
+            var caps = new IndexerCapabilities();
 
             // Apple
             caps.Categories.AddCategoryMapping("Mac", NewznabStandardCategory.ConsoleOther, "Mac");
             caps.Categories.AddCategoryMapping("iOS", NewznabStandardCategory.PCMobileiOS, "iOS");
             caps.Categories.AddCategoryMapping("Apple Bandai Pippin", NewznabStandardCategory.ConsoleOther, "Apple Bandai Pippin");
+            caps.Categories.AddCategoryMapping("Apple II", NewznabStandardCategory.ConsoleOther, "Apple II");
 
             // Google
             caps.Categories.AddCategoryMapping("Android", NewznabStandardCategory.PCMobileAndroid, "Android");
@@ -79,6 +82,7 @@ namespace NzbDrone.Core.Indexers.Definitions
             caps.Categories.AddCategoryMapping("Nintendo GameCube", NewznabStandardCategory.ConsoleOther, "Nintendo GameCube");
             caps.Categories.AddCategoryMapping("Pokemon Mini", NewznabStandardCategory.ConsoleOther, "Pokemon Mini");
             caps.Categories.AddCategoryMapping("SNES", NewznabStandardCategory.ConsoleOther, "SNES");
+            caps.Categories.AddCategoryMapping("Switch", NewznabStandardCategory.ConsoleOther, "Switch");
             caps.Categories.AddCategoryMapping("Virtual Boy", NewznabStandardCategory.ConsoleOther, "Virtual Boy");
             caps.Categories.AddCategoryMapping("Wii", NewznabStandardCategory.ConsoleWii, "Wii");
             caps.Categories.AddCategoryMapping("Wii U", NewznabStandardCategory.ConsoleWiiU, "Wii U");
@@ -111,6 +115,24 @@ namespace NzbDrone.Core.Indexers.Definitions
             // Amstrad
             caps.Categories.AddCategoryMapping("Amstrad CPC", NewznabStandardCategory.ConsoleOther, "Amstrad CPC");
 
+            // Bandai
+            caps.Categories.AddCategoryMapping("Bandai WonderSwan", NewznabStandardCategory.ConsoleOther, "Bandai WonderSwan");
+            caps.Categories.AddCategoryMapping("Bandai WonderSwan Color", NewznabStandardCategory.ConsoleOther, "Bandai WonderSwan Color");
+
+            // Commodore
+            caps.Categories.AddCategoryMapping("Commodore 64", NewznabStandardCategory.ConsoleOther, "Commodore 64");
+            caps.Categories.AddCategoryMapping("Commodore 128", NewznabStandardCategory.ConsoleOther, "Commodore 128");
+            caps.Categories.AddCategoryMapping("Commodore Amiga", NewznabStandardCategory.ConsoleOther, "Commodore Amiga");
+            caps.Categories.AddCategoryMapping("Amiga CD32", NewznabStandardCategory.ConsoleOther, "Amiga CD32");
+            caps.Categories.AddCategoryMapping("Commodore Plus-4", NewznabStandardCategory.ConsoleOther, "Commodore Plus-4");
+            caps.Categories.AddCategoryMapping("Commodore VIC-20", NewznabStandardCategory.ConsoleOther, "Commodore VIC-20");
+
+            // NEC
+            caps.Categories.AddCategoryMapping("NEC PC-98", NewznabStandardCategory.ConsoleOther, "NEC PC-98");
+            caps.Categories.AddCategoryMapping("NEC PC-FX", NewznabStandardCategory.ConsoleOther, "NEC PC-FX");
+            caps.Categories.AddCategoryMapping("NEC SuperGrafx", NewznabStandardCategory.ConsoleOther, "NEC SuperGrafx");
+            caps.Categories.AddCategoryMapping("NEC TurboGrafx-16", NewznabStandardCategory.ConsoleOther, "NEC TurboGrafx-16");
+
             // Sinclair
             caps.Categories.AddCategoryMapping("ZX Spectrum", NewznabStandardCategory.ConsoleOther, "ZX Spectrum");
 
@@ -134,16 +156,9 @@ namespace NzbDrone.Core.Indexers.Definitions
 
             // Other
             caps.Categories.AddCategoryMapping("3DO", NewznabStandardCategory.ConsoleOther, "3DO");
-            caps.Categories.AddCategoryMapping("Bandai WonderSwan", NewznabStandardCategory.ConsoleOther, "Bandai WonderSwan");
-            caps.Categories.AddCategoryMapping("Bandai WonderSwan Color", NewznabStandardCategory.ConsoleOther, "Bandai WonderSwan Color");
             caps.Categories.AddCategoryMapping("Casio Loopy", NewznabStandardCategory.ConsoleOther, "Casio Loopy");
             caps.Categories.AddCategoryMapping("Casio PV-1000", NewznabStandardCategory.ConsoleOther, "Casio PV-1000");
             caps.Categories.AddCategoryMapping("Colecovision", NewznabStandardCategory.ConsoleOther, "Colecovision");
-            caps.Categories.AddCategoryMapping("Commodore 64", NewznabStandardCategory.ConsoleOther, "Commodore 64");
-            caps.Categories.AddCategoryMapping("Commodore 128", NewznabStandardCategory.ConsoleOther, "Commodore 128");
-            caps.Categories.AddCategoryMapping("Commodore Amiga", NewznabStandardCategory.ConsoleOther, "Commodore Amiga");
-            caps.Categories.AddCategoryMapping("Commodore Plus-4", NewznabStandardCategory.ConsoleOther, "Commodore Plus-4");
-            caps.Categories.AddCategoryMapping("Commodore VIC-20", NewznabStandardCategory.ConsoleOther, "Commodore VIC-20");
             caps.Categories.AddCategoryMapping("Emerson Arcadia 2001", NewznabStandardCategory.ConsoleOther, "Emerson Arcadia 2001");
             caps.Categories.AddCategoryMapping("Entex Adventure Vision", NewznabStandardCategory.ConsoleOther, "Entex Adventure Vision");
             caps.Categories.AddCategoryMapping("Epoch Super Casette Vision", NewznabStandardCategory.ConsoleOther, "Epoch Super Casette Vision");
@@ -158,13 +173,11 @@ namespace NzbDrone.Core.Indexers.Definitions
             caps.Categories.AddCategoryMapping("Mattel Intellivision", NewznabStandardCategory.ConsoleOther, "Mattel Intellivision");
             caps.Categories.AddCategoryMapping("Memotech MTX", NewznabStandardCategory.ConsoleOther, "Memotech MTX");
             caps.Categories.AddCategoryMapping("Miles Gordon Sam Coupe", NewznabStandardCategory.ConsoleOther, "Miles Gordon Sam Coupe");
-            caps.Categories.AddCategoryMapping("NEC PC-98", NewznabStandardCategory.ConsoleOther, "NEC PC-98");
-            caps.Categories.AddCategoryMapping("NEC PC-FX", NewznabStandardCategory.ConsoleOther, "NEC PC-FX");
-            caps.Categories.AddCategoryMapping("NEC SuperGrafx", NewznabStandardCategory.ConsoleOther, "NEC SuperGrafx");
-            caps.Categories.AddCategoryMapping("NEC TurboGrafx-16", NewznabStandardCategory.ConsoleOther, "NEC TurboGrafx-16");
             caps.Categories.AddCategoryMapping("Nokia N-Gage", NewznabStandardCategory.ConsoleOther, "Nokia N-Gage");
+            caps.Categories.AddCategoryMapping("Oculus Quest", NewznabStandardCategory.ConsoleOther, "Oculus Quest");
             caps.Categories.AddCategoryMapping("Ouya", NewznabStandardCategory.ConsoleOther, "Ouya");
             caps.Categories.AddCategoryMapping("Philips Videopac+", NewznabStandardCategory.ConsoleOther, "Philips Videopac+");
+            caps.Categories.AddCategoryMapping("Philips CD-i", NewznabStandardCategory.ConsoleOther, "Philips CD-i");
             caps.Categories.AddCategoryMapping("Phone/PDA", NewznabStandardCategory.ConsoleOther, "Phone/PDA");
             caps.Categories.AddCategoryMapping("RCA Studio II", NewznabStandardCategory.ConsoleOther, "RCA Studio II");
             caps.Categories.AddCategoryMapping("Sharp X1", NewznabStandardCategory.ConsoleOther, "Sharp X1");
@@ -179,35 +192,62 @@ namespace NzbDrone.Core.Indexers.Definitions
             caps.Categories.AddCategoryMapping("Retro - Other", NewznabStandardCategory.ConsoleOther, "Retro - Other");
 
             // special categories (real categories/not platforms)
-            caps.Categories.AddCategoryMapping("OST", NewznabStandardCategory.AudioOther, "OST");
-            caps.Categories.AddCategoryMapping("Applications", NewznabStandardCategory.PC0day, "Applications");
-            caps.Categories.AddCategoryMapping("E-Books", NewznabStandardCategory.BooksEBook, "E-Books");
+            caps.Categories.AddCategoryMapping(1, NewznabStandardCategory.PCGames, "Games");
+            caps.Categories.AddCategoryMapping(2, NewznabStandardCategory.PC0day, "Applications");
+            caps.Categories.AddCategoryMapping(3, NewznabStandardCategory.BooksEBook, "E-Books");
+            caps.Categories.AddCategoryMapping(4, NewznabStandardCategory.AudioOther, "OST");
 
             return caps;
         }
 
         protected override async Task Test(List<ValidationFailure> failures)
         {
-            ((GazelleGamesRequestGenerator)GetRequestGenerator()).FetchPasskey();
-            await base.Test(failures);
+            await FetchPasskey().ConfigureAwait(false);
+
+            await base.Test(failures).ConfigureAwait(false);
+        }
+
+        private async Task FetchPasskey()
+        {
+            var request = new HttpRequestBuilder($"{Settings.BaseUrl.Trim().TrimEnd('/')}/api.php")
+                .Accept(HttpAccept.Json)
+                .SetHeader("X-API-Key", Settings.Apikey)
+                .AddQueryParam("request", "quick_user")
+                .Build();
+
+            var indexResponse = await _httpClient.ExecuteProxiedAsync(request, Definition).ConfigureAwait(false);
+
+            var index = Json.Deserialize<GazelleGamesUserResponse>(indexResponse.Content);
+
+            if (index == null ||
+                string.IsNullOrWhiteSpace(index.Status) ||
+                index.Status != "success" ||
+                string.IsNullOrWhiteSpace(index.Response.PassKey))
+            {
+                throw new IndexerAuthException("Failed to authenticate with GazelleGames.");
+            }
+
+            // Set passkey on settings so it can be used to generate the download URL
+            Settings.Passkey = index.Response.PassKey;
         }
     }
 
     public class GazelleGamesRequestGenerator : IIndexerRequestGenerator
     {
-        public GazelleGamesSettings Settings { get; set; }
-        public IndexerCapabilities Capabilities { get; set; }
-        public IIndexerHttpClient HttpClient { get; set; }
+        private readonly GazelleGamesSettings _settings;
+        private readonly IndexerCapabilities _capabilities;
 
-        public GazelleGamesRequestGenerator()
+        public GazelleGamesRequestGenerator(GazelleGamesSettings settings, IndexerCapabilities capabilities)
         {
+            _settings = settings;
+            _capabilities = capabilities;
         }
 
         public IndexerPageableRequestChain GetSearchRequests(MovieSearchCriteria searchCriteria)
         {
             var pageableRequests = new IndexerPageableRequestChain();
 
-            pageableRequests.Add(GetRequest(GetBasicSearchParameters(searchCriteria.SanitizedSearchTerm, searchCriteria.Categories)));
+            pageableRequests.Add(GetRequest(GetBasicSearchParameters(searchCriteria.SanitizedSearchTerm, searchCriteria)));
 
             return pageableRequests;
         }
@@ -216,7 +256,7 @@ namespace NzbDrone.Core.Indexers.Definitions
         {
             var pageableRequests = new IndexerPageableRequestChain();
 
-            pageableRequests.Add(GetRequest(GetBasicSearchParameters(searchCriteria.SanitizedSearchTerm, searchCriteria.Categories)));
+            pageableRequests.Add(GetRequest(GetBasicSearchParameters(searchCriteria.SanitizedSearchTerm, searchCriteria)));
 
             return pageableRequests;
         }
@@ -225,7 +265,7 @@ namespace NzbDrone.Core.Indexers.Definitions
         {
             var pageableRequests = new IndexerPageableRequestChain();
 
-            pageableRequests.Add(GetRequest(GetBasicSearchParameters(searchCriteria.SanitizedSearchTerm, searchCriteria.Categories)));
+            pageableRequests.Add(GetRequest(GetBasicSearchParameters(searchCriteria.SanitizedSearchTerm, searchCriteria)));
 
             return pageableRequests;
         }
@@ -234,7 +274,7 @@ namespace NzbDrone.Core.Indexers.Definitions
         {
             var pageableRequests = new IndexerPageableRequestChain();
 
-            pageableRequests.Add(GetRequest(GetBasicSearchParameters(searchCriteria.SanitizedSearchTerm, searchCriteria.Categories)));
+            pageableRequests.Add(GetRequest(GetBasicSearchParameters(searchCriteria.SanitizedSearchTerm, searchCriteria)));
 
             return pageableRequests;
         }
@@ -243,61 +283,77 @@ namespace NzbDrone.Core.Indexers.Definitions
         {
             var pageableRequests = new IndexerPageableRequestChain();
 
-            pageableRequests.Add(GetRequest(GetBasicSearchParameters(searchCriteria.SanitizedSearchTerm, searchCriteria.Categories)));
+            pageableRequests.Add(GetRequest(GetBasicSearchParameters(searchCriteria.SanitizedSearchTerm, searchCriteria)));
 
             return pageableRequests;
         }
 
-        public void FetchPasskey()
+        private IEnumerable<IndexerRequest> GetRequest(List<KeyValuePair<string, string>> parameters)
         {
-            // GET on index for the passkey
-            var request = RequestBuilder().Resource("api.php?request=quick_user").Build();
-            var indexResponse = HttpClient.Execute(request);
-            var index = Json.Deserialize<GazelleGamesUserResponse>(indexResponse.Content);
-            if (index == null ||
-                string.IsNullOrWhiteSpace(index.Status) ||
-                index.Status != "success" ||
-                string.IsNullOrWhiteSpace(index.Response.PassKey))
-            {
-                throw new Exception("Failed to authenticate with GazelleGames.");
-            }
-
-            // Set passkey on settings so it can be used to generate the download URL
-            Settings.Passkey = index.Response.PassKey;
-        }
-
-        private IEnumerable<IndexerRequest> GetRequest(string parameters)
-        {
-            var req = RequestBuilder()
-                .Resource($"api.php?{parameters}")
+            var request = RequestBuilder()
+                .Resource($"/api.php?{parameters.GetQueryString()}")
                 .Build();
 
-            yield return new IndexerRequest(req);
+            yield return new IndexerRequest(request);
         }
 
         private HttpRequestBuilder RequestBuilder()
         {
-            return new HttpRequestBuilder($"{Settings.BaseUrl.Trim().TrimEnd('/')}")
+            return new HttpRequestBuilder($"{_settings.BaseUrl.Trim().TrimEnd('/')}")
+                .Resource("/api.php")
                 .Accept(HttpAccept.Json)
-                .SetHeader("X-API-Key", Settings.Apikey);
+                .SetHeader("X-API-Key", _settings.Apikey);
         }
 
-        private string GetBasicSearchParameters(string searchTerm, int[] categories)
+        private List<KeyValuePair<string, string>> GetBasicSearchParameters(string searchTerm, SearchCriteriaBase searchCriteria)
         {
-            var parameters = "request=search&search_type=torrents&empty_groups=filled&order_by=time&order_way=desc";
-
-            if (!string.IsNullOrWhiteSpace(searchTerm))
+            var parameters = new List<KeyValuePair<string, string>>
             {
-                var searchType = Settings.SearchGroupNames ? "groupname" : "searchstr";
+                { "request", "search" },
+                { "search_type", "torrents" },
+                { "empty_groups", "filled" },
+                { "order_by", "time" },
+                { "order_way", "desc" }
+            };
 
-                parameters += string.Format("&{1}={0}", searchTerm.Replace(".", " "), searchType);
+            if (searchTerm.IsNotNullOrWhiteSpace())
+            {
+                parameters.Add(
+                    _settings.SearchGroupNames ? "groupname" : "searchstr",
+                    searchTerm.Replace(".", " "));
             }
 
-            if (categories != null)
+            if (searchCriteria.Categories != null)
             {
-                foreach (var cat in Capabilities.Categories.MapTorznabCapsToTrackers(categories))
+                var categoryMappings = _capabilities.Categories
+                    .MapTorznabCapsToTrackers(searchCriteria.Categories)
+                    .Distinct()
+                    .Where(x => !x.IsAllDigits())
+                    .ToList();
+
+                categoryMappings.ForEach(category => parameters.Add("artistcheck[]", category));
+            }
+
+            if (_settings.FreeleechOnly)
+            {
+                parameters.Add("freetorrent", "1");
+            }
+
+            if (searchCriteria.MinSize is > 0)
+            {
+                var minSize = searchCriteria.MinSize.Value / 1024L / 1024L;
+                if (minSize > 0)
                 {
-                    parameters += string.Format("&artistcheck[]={0}", cat);
+                    parameters.Add("sizesmall", minSize.ToString());
+                }
+            }
+
+            if (searchCriteria.MaxSize is > 0)
+            {
+                var maxSize = searchCriteria.MaxSize.Value / 1024L / 1024L;
+                if (maxSize > 0)
+                {
+                    parameters.Add("sizeslarge", maxSize.ToString());
                 }
             }
 
@@ -313,6 +369,8 @@ namespace NzbDrone.Core.Indexers.Definitions
         private readonly GazelleGamesSettings _settings;
         private readonly IndexerCapabilitiesCategories _categories;
 
+        private static Regex YearRegex => new (@"\b(?:19|20|21)\d{2}\b", RegexOptions.Compiled);
+
         public GazelleGamesParser(GazelleGamesSettings settings, IndexerCapabilitiesCategories categories)
         {
             _settings = settings;
@@ -325,75 +383,81 @@ namespace NzbDrone.Core.Indexers.Definitions
 
             if (indexerResponse.HttpResponse.StatusCode != HttpStatusCode.OK)
             {
-                throw new IndexerException(indexerResponse, $"Unexpected response status {indexerResponse.HttpResponse.StatusCode} code from API request");
+                throw new IndexerException(indexerResponse, $"Unexpected response status {indexerResponse.HttpResponse.StatusCode} code from indexer request");
             }
 
             if (!indexerResponse.HttpResponse.Headers.ContentType.Contains(HttpAccept.Json.Value))
             {
-                throw new IndexerException(indexerResponse, $"Unexpected response header {indexerResponse.HttpResponse.Headers.ContentType} from API request, expected {HttpAccept.Json.Value}");
+                throw new IndexerException(indexerResponse, $"Unexpected response header {indexerResponse.HttpResponse.Headers.ContentType} from indexer request, expected {HttpAccept.Json.Value}");
             }
 
             var jsonResponse = new HttpResponse<GazelleGamesResponse>(indexerResponse.HttpResponse);
+
             if (jsonResponse.Resource.Status != "success" ||
                 string.IsNullOrWhiteSpace(jsonResponse.Resource.Status) ||
-                jsonResponse.Resource.Response == null)
+                jsonResponse.Resource.Response is not JObject response)
             {
                 return torrentInfos;
             }
 
-            Dictionary<string, GazelleGamesGroup> response;
+            var groups = response.ToObject<Dictionary<int, GazelleGamesGroup>>(JsonSerializer.Create(Json.GetSerializerSettings()));
 
-            try
+            foreach (var group in groups)
             {
-                response = ((JObject)jsonResponse.Resource.Response).ToObject<Dictionary<string, GazelleGamesGroup>>();
-            }
-            catch
-            {
-                return torrentInfos;
-            }
-
-            foreach (var result in response)
-            {
-                Dictionary<string, GazelleGamesTorrent> torrents;
-
-                try
-                {
-                    torrents = ((JObject)result.Value.Torrents).ToObject<Dictionary<string, GazelleGamesTorrent>>();
-                }
-                catch
+                if (group.Value.Torrents is not JObject groupTorrents)
                 {
                     continue;
                 }
 
-                if (result.Value.Torrents != null)
+                var torrents = groupTorrents
+                    .ToObject<Dictionary<int, GazelleGamesTorrent>>(JsonSerializer.Create(Json.GetSerializerSettings()))
+                    .Where(t => t.Value.TorrentType.ToUpperInvariant() == "TORRENT")
+                    .ToList();
+
+                var categories = group.Value.Artists
+                    .SelectMany(a => _categories.MapTrackerCatDescToNewznab(a.Name))
+                    .Distinct()
+                    .ToArray();
+
+                foreach (var torrent in torrents)
                 {
-                    var categories = result.Value.Artists.Select(a => a.Name);
+                    Enum.TryParse(torrent.Value.FreeTorrent, true, out GazelleGamesFreeTorrent freeTorrent);
+                    var downloadVolumeFactor = freeTorrent is GazelleGamesFreeTorrent.FreeLeech or GazelleGamesFreeTorrent.Neutral || torrent.Value.LowSeedFL ? 0 : 1;
 
-                    foreach (var torrent in torrents)
+                    // Skip non-freeleech results when freeleech only is set
+                    if (_settings.FreeleechOnly && downloadVolumeFactor != 0.0)
                     {
-                        var id = int.Parse(torrent.Key);
-
-                        var infoUrl = GetInfoUrl(result.Key, id);
-
-                        var release = new TorrentInfo()
-                        {
-                            Guid = infoUrl,
-                            Title = torrent.Value.ReleaseTitle,
-                            Files = torrent.Value.FileCount,
-                            Grabs = torrent.Value.Snatched,
-                            Size = long.Parse(torrent.Value.Size),
-                            DownloadUrl = GetDownloadUrl(id),
-                            InfoUrl = infoUrl,
-                            Seeders = torrent.Value.Seeders,
-                            Categories = _categories.MapTrackerCatDescToNewznab(categories.FirstOrDefault()),
-                            Peers = torrent.Value.Leechers + torrent.Value.Seeders,
-                            PublishDate = torrent.Value.Time.ToUniversalTime(),
-                            DownloadVolumeFactor = torrent.Value.FreeTorrent == GazelleGamesFreeTorrent.FreeLeech || torrent.Value.FreeTorrent == GazelleGamesFreeTorrent.Neutral || torrent.Value.LowSeedFL ? 0 : 1,
-                            UploadVolumeFactor = torrent.Value.FreeTorrent == GazelleGamesFreeTorrent.Neutral ? 0 : 1
-                        };
-
-                        torrentInfos.Add(release);
+                        continue;
                     }
+
+                    var torrentId = torrent.Key;
+                    var infoUrl = GetInfoUrl(group.Key, torrentId);
+
+                    if (categories.Length == 0)
+                    {
+                        categories = _categories.MapTrackerCatToNewznab(torrent.Value.CategoryId.ToString()).ToArray();
+                    }
+
+                    var release = new TorrentInfo
+                    {
+                        Guid = infoUrl,
+                        InfoUrl = infoUrl,
+                        DownloadUrl = GetDownloadUrl(torrentId),
+                        Title = GetTitle(group.Value, torrent.Value),
+                        Categories = categories,
+                        Files = torrent.Value.FileCount,
+                        Size = long.Parse(torrent.Value.Size),
+                        Grabs = torrent.Value.Snatched,
+                        Seeders = torrent.Value.Seeders,
+                        Peers = torrent.Value.Leechers + torrent.Value.Seeders,
+                        PublishDate = torrent.Value.Time.ToUniversalTime(),
+                        Scene = torrent.Value.Scene == 1,
+                        DownloadVolumeFactor = downloadVolumeFactor,
+                        UploadVolumeFactor = freeTorrent == GazelleGamesFreeTorrent.Neutral ? 0 : 1,
+                        MinimumSeedTime = 288000 // Minimum of 3 days and 8 hours (80 hours in total)
+                    };
+
+                    torrentInfos.Add(release);
                 }
             }
 
@@ -402,6 +466,54 @@ namespace NzbDrone.Core.Indexers.Definitions
                 torrentInfos
                     .OrderByDescending(o => o.PublishDate)
                     .ToArray();
+        }
+
+        private static string GetTitle(GazelleGamesGroup group, GazelleGamesTorrent torrent)
+        {
+            var title = WebUtility.HtmlDecode(torrent.ReleaseTitle);
+
+            if (group.Year is > 0 && title.IsNotNullOrWhiteSpace() && !YearRegex.Match(title).Success)
+            {
+                title += $" ({group.Year})";
+            }
+
+            if (torrent.RemasterTitle.IsNotNullOrWhiteSpace())
+            {
+                title += $" [{$"{WebUtility.HtmlDecode(torrent.RemasterTitle)} {torrent.RemasterYear}".Trim()}]";
+            }
+
+            var flags = new List<string>
+            {
+                $"{torrent.Format} {torrent.Encoding}".Trim()
+            };
+
+            if (group.Artists is { Count: > 0 })
+            {
+                flags.AddIfNotNull(group.Artists.Select(a => a.Name).Join(", "));
+            }
+
+            flags.AddIfNotNull(torrent.Language);
+            flags.AddIfNotNull(torrent.Region);
+            flags.AddIfNotNull(torrent.Miscellaneous);
+
+            if (torrent.Dupable == 1)
+            {
+                flags.Add("Trumpable");
+            }
+
+            flags = flags.Where(x => x.IsNotNullOrWhiteSpace()).ToList();
+
+            if (flags.Any())
+            {
+                title += $" [{string.Join(" / ", flags)}]";
+            }
+
+            if (torrent.GameDoxType.IsNotNullOrWhiteSpace())
+            {
+                title += $" [{torrent.GameDoxType.Trim()}]";
+            }
+
+            return title;
         }
 
         private string GetDownloadUrl(int torrentId)
@@ -418,7 +530,7 @@ namespace NzbDrone.Core.Indexers.Definitions
             return url.FullUri;
         }
 
-        private string GetInfoUrl(string groupId, int torrentId)
+        private string GetInfoUrl(int groupId, int torrentId)
         {
             var url = new HttpUri(_settings.BaseUrl)
                 .CombinePath("/torrents.php")
@@ -449,11 +561,14 @@ namespace NzbDrone.Core.Indexers.Definitions
             Passkey = "";
         }
 
-        [FieldDefinition(2, Label = "API Key", HelpText = "API Key from the Site (Found in Settings => Access Settings), Must have User Permissions", Privacy = PrivacyLevel.ApiKey)]
+        [FieldDefinition(2, Label = "ApiKey", HelpText = "IndexerGazelleGamesSettingsApiKeyHelpText", HelpTextWarning = "IndexerGazelleGamesSettingsApiKeyHelpTextWarning", Privacy = PrivacyLevel.ApiKey)]
         public string Apikey { get; set; }
 
-        [FieldDefinition(3, Label = "Search Group Names", Type = FieldType.Checkbox, HelpText = "Search Group Names Only")]
+        [FieldDefinition(3, Label = "IndexerGazelleGamesSettingsSearchGroupNames", Type = FieldType.Checkbox, HelpText = "IndexerGazelleGamesSettingsSearchGroupNamesHelpText")]
         public bool SearchGroupNames { get; set; }
+
+        [FieldDefinition(4, Label = "IndexerSettingsFreeleechOnly", HelpText = "IndexerGazelleGamesSettingsFreeleechOnlyHelpText", Type = FieldType.Checkbox, Advanced = true)]
+        public bool FreeleechOnly { get; set; }
 
         public string Passkey { get; set; }
 
@@ -471,8 +586,9 @@ namespace NzbDrone.Core.Indexers.Definitions
 
     public class GazelleGamesGroup
     {
-        public List<GazelleGamesArtist> Artists { get; set; }
+        public ReadOnlyCollection<GazelleGamesArtist> Artists { get; set; }
         public object Torrents { get; set; }
+        public int? Year { get; set; }
     }
 
     public class GazelleGamesArtist
@@ -483,16 +599,30 @@ namespace NzbDrone.Core.Indexers.Definitions
 
     public class GazelleGamesTorrent
     {
+        public int CategoryId { get; set; }
+        public string Format { get; set; }
+        public string Encoding { get; set; }
+        public string Language { get; set; }
+        public string Region { get; set; }
+        public string RemasterYear { get; set; }
+        public string RemasterTitle { get; set; }
+        public string ReleaseTitle { get; set; }
+        public string Miscellaneous { get; set; }
+        public int Scene { get; set; }
+        public int Dupable { get; set; }
+        public DateTime Time { get; set; }
+        public string TorrentType { get; set; }
+        public int FileCount { get; set; }
         public string Size { get; set; }
         public int? Snatched { get; set; }
         public int Seeders { get; set; }
         public int Leechers { get; set; }
-        public string ReleaseTitle { get; set; }
-        public DateTime Time { get; set; }
-        public int FileCount { get; set; }
-        public GazelleGamesFreeTorrent FreeTorrent { get; set; }
+        public string FreeTorrent { get; set; }
         public bool PersonalFL { get; set; }
         public bool LowSeedFL { get; set; }
+
+        [JsonProperty("GameDOXType")]
+        public string GameDoxType { get; set; }
     }
 
     public class GazelleGamesUserResponse
@@ -508,9 +638,9 @@ namespace NzbDrone.Core.Indexers.Definitions
 
     public enum GazelleGamesFreeTorrent
     {
-        Normal,
-        FreeLeech,
-        Neutral,
-        Either
+        Normal = 0,
+        FreeLeech = 1,
+        Neutral = 2,
+        Either = 3
     }
 }

@@ -23,6 +23,8 @@ namespace NzbDrone.Core.Applications.Whisparr
 
     public class WhisparrV3Proxy : IWhisparrV3Proxy
     {
+        private const string AppApiRoute = "/api/v3";
+        private const string AppIndexerApiRoute = $"{AppApiRoute}/indexer";
         private readonly IHttpClient _httpClient;
         private readonly Logger _logger;
 
@@ -34,13 +36,13 @@ namespace NzbDrone.Core.Applications.Whisparr
 
         public WhisparrStatus GetStatus(WhisparrSettings settings)
         {
-            var request = BuildRequest(settings, "/api/v3/system/status", HttpMethod.Get);
+            var request = BuildRequest(settings, $"{AppApiRoute}/system/status", HttpMethod.Get);
             return Execute<WhisparrStatus>(request);
         }
 
         public List<WhisparrIndexer> GetIndexers(WhisparrSettings settings)
         {
-            var request = BuildRequest(settings, "/api/v3/indexer", HttpMethod.Get);
+            var request = BuildRequest(settings, $"{AppIndexerApiRoute}", HttpMethod.Get);
             return Execute<List<WhisparrIndexer>>(request);
         }
 
@@ -48,7 +50,7 @@ namespace NzbDrone.Core.Applications.Whisparr
         {
             try
             {
-                var request = BuildRequest(settings, $"/api/v3/indexer/{indexerId}", HttpMethod.Get);
+                var request = BuildRequest(settings, $"{AppIndexerApiRoute}/{indexerId}", HttpMethod.Get);
                 return Execute<WhisparrIndexer>(request);
             }
             catch (HttpException ex)
@@ -64,81 +66,123 @@ namespace NzbDrone.Core.Applications.Whisparr
 
         public void RemoveIndexer(int indexerId, WhisparrSettings settings)
         {
-            var request = BuildRequest(settings, $"/api/v3/indexer/{indexerId}", HttpMethod.Delete);
+            var request = BuildRequest(settings, $"{AppIndexerApiRoute}/{indexerId}", HttpMethod.Delete);
             _httpClient.Execute(request);
         }
 
         public List<WhisparrIndexer> GetIndexerSchema(WhisparrSettings settings)
         {
-            var request = BuildRequest(settings, "/api/v3/indexer/schema", HttpMethod.Get);
+            var request = BuildRequest(settings, $"{AppIndexerApiRoute}/schema", HttpMethod.Get);
             return Execute<List<WhisparrIndexer>>(request);
         }
 
         public WhisparrIndexer AddIndexer(WhisparrIndexer indexer, WhisparrSettings settings)
         {
-            var request = BuildRequest(settings, "/api/v3/indexer", HttpMethod.Post);
+            var request = BuildRequest(settings, $"{AppIndexerApiRoute}", HttpMethod.Post);
 
             request.SetContent(indexer.ToJson());
+            request.ContentSummary = indexer.ToJson(Formatting.None);
 
-            return Execute<WhisparrIndexer>(request);
+            try
+            {
+                return ExecuteIndexerRequest(request);
+            }
+            catch (HttpException ex) when (ex.Response.StatusCode == HttpStatusCode.BadRequest)
+            {
+                request.Url = request.Url.AddQueryParam("forceSave", "true");
+
+                return ExecuteIndexerRequest(request);
+            }
         }
 
         public WhisparrIndexer UpdateIndexer(WhisparrIndexer indexer, WhisparrSettings settings)
         {
-            var request = BuildRequest(settings, $"/api/v3/indexer/{indexer.Id}", HttpMethod.Put);
+            var request = BuildRequest(settings, $"{AppIndexerApiRoute}/{indexer.Id}", HttpMethod.Put);
 
             request.SetContent(indexer.ToJson());
+            request.ContentSummary = indexer.ToJson(Formatting.None);
 
-            return Execute<WhisparrIndexer>(request);
+            try
+            {
+                return ExecuteIndexerRequest(request);
+            }
+            catch (HttpException ex) when (ex.Response.StatusCode == HttpStatusCode.BadRequest)
+            {
+                _logger.Debug("Retrying to update indexer forcefully");
+
+                request.Url = request.Url.AddQueryParam("forceSave", "true");
+
+                return ExecuteIndexerRequest(request);
+            }
         }
 
         public ValidationFailure TestConnection(WhisparrIndexer indexer, WhisparrSettings settings)
         {
-            var request = BuildRequest(settings, $"/api/v3/indexer/test", HttpMethod.Post);
+            var request = BuildRequest(settings, $"{AppIndexerApiRoute}/test", HttpMethod.Post);
 
             request.SetContent(indexer.ToJson());
+            request.ContentSummary = indexer.ToJson(Formatting.None);
 
+            _httpClient.Post(request);
+
+            return null;
+        }
+
+        private WhisparrIndexer ExecuteIndexerRequest(HttpRequest request)
+        {
             try
             {
-                Execute<WhisparrIndexer>(request);
+                return Execute<WhisparrIndexer>(request);
             }
             catch (HttpException ex)
             {
-                if (ex.Response.StatusCode == HttpStatusCode.Unauthorized)
+                switch (ex.Response.StatusCode)
                 {
-                    _logger.Error(ex, "API Key is invalid");
-                    return new ValidationFailure("ApiKey", "API Key is invalid");
+                    case HttpStatusCode.Unauthorized:
+                        _logger.Warn(ex, "API Key is invalid");
+                        break;
+                    case HttpStatusCode.BadRequest:
+                        if (ex.Response.Content.Contains("Query successful, but no results in the configured categories were returned from your indexer.", StringComparison.InvariantCultureIgnoreCase))
+                        {
+                            _logger.Warn(ex, "No Results in configured categories. See FAQ Entry: Prowlarr will not sync X Indexer to App");
+                            break;
+                        }
+
+                        _logger.Error(ex, "Invalid Request");
+                        break;
+                    case HttpStatusCode.SeeOther:
+                    case HttpStatusCode.TemporaryRedirect:
+                        _logger.Warn(ex, "App returned redirect and is invalid. Check App URL");
+                        break;
+                    case HttpStatusCode.NotFound:
+                        _logger.Warn(ex, "Remote indexer not found");
+                        break;
+                    default:
+                        _logger.Error(ex, "Unexpected response status code: {0}", ex.Response.StatusCode);
+                        break;
                 }
 
-                if (ex.Response.StatusCode == HttpStatusCode.BadRequest)
-                {
-                    _logger.Error(ex, "Prowlarr URL is invalid");
-                    return new ValidationFailure("ProwlarrUrl", "Prowlarr url is invalid, Whisparr cannot connect to Prowlarr");
-                }
-
-                if (ex.Response.StatusCode == HttpStatusCode.SeeOther)
-                {
-                    _logger.Error(ex, "Whisparr returned redirect and is invalid");
-                    return new ValidationFailure("BaseUrl", "Whisparr url is invalid, Prowlarr cannot connect to Whisparr - are you missing a url base?");
-                }
-
-                _logger.Error(ex, "Unable to send test message");
-                return new ValidationFailure("BaseUrl", "Unable to complete application test");
+                throw;
+            }
+            catch (JsonReaderException ex)
+            {
+                _logger.Error(ex, "Unable to parse JSON response from application");
+                throw;
             }
             catch (Exception ex)
             {
-                _logger.Error(ex, "Unable to send test message");
-                return new ValidationFailure("", "Unable to send test message");
+                _logger.Error(ex, "Unable to add or update indexer");
+                throw;
             }
-
-            return null;
         }
 
         private HttpRequest BuildRequest(WhisparrSettings settings, string resource, HttpMethod method)
         {
             var baseUrl = settings.BaseUrl.TrimEnd('/');
 
-            var request = new HttpRequestBuilder(baseUrl).Resource(resource)
+            var request = new HttpRequestBuilder(baseUrl)
+                .Resource(resource)
+                .Accept(HttpAccept.Json)
                 .SetHeader("X-Api-Key", settings.ApiKey)
                 .Build();
 
@@ -155,9 +199,12 @@ namespace NzbDrone.Core.Applications.Whisparr
         {
             var response = _httpClient.Execute(request);
 
-            var results = JsonConvert.DeserializeObject<TResource>(response.Content);
+            if ((int)response.StatusCode >= 300)
+            {
+                throw new HttpException(response);
+            }
 
-            return results;
+            return Json.Deserialize<TResource>(response.Content);
         }
     }
 }

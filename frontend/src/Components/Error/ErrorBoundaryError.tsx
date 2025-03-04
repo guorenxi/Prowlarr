@@ -23,7 +23,9 @@ function ErrorBoundaryError(props: ErrorBoundaryErrorProps) {
     info,
   } = props;
 
-  const [detailedError, setDetailedError] = useState(null);
+  const [detailedError, setDetailedError] = useState<
+    StackTrace.StackFrame[] | null
+  >(null);
 
   useEffect(() => {
     if (error) {
@@ -61,11 +63,7 @@ function ErrorBoundaryError(props: ErrorBoundaryErrorProps) {
           <div>{info.componentStack}</div>
         )}
 
-        {
-          <div className={styles.version}>
-            Version: {window.Prowlarr.version}
-          </div>
-        }
+        <div className={styles.version}>Version: {window.Prowlarr.version}</div>
       </details>
     </div>
   );

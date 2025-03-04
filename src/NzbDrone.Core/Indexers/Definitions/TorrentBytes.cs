@@ -27,7 +27,6 @@ namespace NzbDrone.Core.Indexers.Definitions
         public override string Description => "A decade of TorrentBytes";
         public override string Language => "en-US";
         public override Encoding Encoding => Encoding.GetEncoding("iso-8859-1");
-        public override DownloadProtocol Protocol => DownloadProtocol.Torrent;
         public override IndexerPrivacy Privacy => IndexerPrivacy.Private;
         public override IndexerCapabilities Capabilities => SetCapabilities();
 
@@ -72,7 +71,7 @@ namespace NzbDrone.Core.Indexers.Definitions
             if (CheckIfLoginNeeded(response))
             {
                 var parser = new HtmlParser();
-                var dom = parser.ParseDocument(response.Content);
+                using var dom = parser.ParseDocument(response.Content);
                 var errorMessage = dom.QuerySelector("td.embedded")?.TextContent.Trim();
 
                 throw new IndexerAuthException(errorMessage ?? "Unknown error message, please report.");
@@ -246,7 +245,7 @@ namespace NzbDrone.Core.Indexers.Definitions
             var torrentInfos = new List<ReleaseInfo>();
 
             var parser = new HtmlParser();
-            var doc = parser.ParseDocument(indexerResponse.Content);
+            using var doc = parser.ParseDocument(indexerResponse.Content);
             var rows = doc.QuerySelectorAll("table > tbody:has(tr > td.colhead) > tr:not(:has(td.colhead))");
             foreach (var row in rows)
             {

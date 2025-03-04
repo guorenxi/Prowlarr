@@ -37,8 +37,8 @@ module.exports = {
 
   // Links
   defaultLinkHoverColor: '#fff',
-  linkColor: '#rgb(230, 96, 0)',
-  linkHoverColor: '#rgb(230, 96, 0, .8)',
+  linkColor: '#5d9cec',
+  linkHoverColor: '#5d9cec',
 
   // Header
   pageHeaderBackgroundColor: '#2a2a2a',
@@ -74,29 +74,29 @@ module.exports = {
 
   defaultButtonTextColor: '#eee',
   defaultButtonBackgroundColor: '#333',
-  defaultBorderColor: '#eaeaea',
+  defaultBorderColor: '#393f45',
   defaultHoverBackgroundColor: '#444',
-  defaultHoverBorderColor: '#d6d6d6;',
+  defaultHoverBorderColor: '#5a6265',
 
   primaryBackgroundColor: '#5d9cec',
   primaryBorderColor: '#5899eb',
   primaryHoverBackgroundColor: '#4b91ea',
-  primaryHoverBorderColor: '#3483e7;',
+  primaryHoverBorderColor: '#3483e7',
 
   successBackgroundColor: '#27c24c',
   successBorderColor: '#26be4a',
   successHoverBackgroundColor: '#24b145',
-  successHoverBorderColor: '#1f9c3d;',
+  successHoverBorderColor: '#1f9c3d',
 
   warningBackgroundColor: '#ff902b',
   warningBorderColor: '#ff8d26',
   warningHoverBackgroundColor: '#ff8517',
-  warningHoverBorderColor: '#fc7800;',
+  warningHoverBorderColor: '#fc7800',
 
   dangerBackgroundColor: '#f05050',
   dangerBorderColor: '#f04b4b',
   dangerHoverBackgroundColor: '#ee3d3d',
-  dangerHoverBorderColor: '#ec2626;',
+  dangerHoverBorderColor: '#ec2626',
 
   iconButtonDisabledColor: '#7a7a7a',
   iconButtonHoverColor: '#666',
@@ -162,7 +162,7 @@ module.exports = {
   inputHoverBackgroundColor: 'rgba(255, 255, 255, 0.20)',
   inputSelectedBackgroundColor: 'rgba(255, 255, 255, 0.05)',
   advancedFormLabelColor: '#ff902b',
-  disabledCheckInputColor: '#ddd',
+  disabledCheckInputColor: '#999',
   disabledInputColor: '#808080',
 
   //
@@ -187,7 +187,8 @@ module.exports = {
   //
   // Charts
 
-  failedColors: ['#ffbeb2', '#feb4a6', '#fdab9b', '#fca290', '#fb9984', '#fa8f79', '#f9856e', '#f77b66', '#f5715d', '#f36754', '#f05c4d', '#ec5049', '#e74545', '#e13b42', '#da323f', '#d3293d', '#ca223c', '#c11a3b', '#b8163a', '#ae123a'],
-  chartColorsDiversified: ['#90caf9', '#f4d166', '#ff8a65', '#ce93d8', '#80cba9', '#ffab91', '#8097ea', '#bcaaa4', '#a57583', '#e4e498', '#9e96af', '#c6ab81', '#6972c6', '#619fc6', '#81ad81', '#f48fb1', '#82afca', '#b5b071', '#8b959b', '#7ec0b4'],
-  chartColors: ['#f4d166', '#f6c760', '#f8bc58', '#f8b252', '#f7a84a', '#f69e41', '#f49538', '#f38b2f', '#f28026', '#f0751e', '#eb6c1c', '#e4641e', '#de5d1f', '#d75521', '#cf4f22', '#c64a22', '#bc4623', '#b24223', '#a83e24', '#9e3a26']
+  chartBackgroundColor: '#262626',
+  failedColors: ['#ffbeb2', '#feb4a6', '#fdab9b', '#fca290', '#fb9984', '#fa8f79', '#f9856e', '#f77b66', '#f5715d', '#f36754', '#f05c4d', '#ec5049', '#e74545', '#e13b42', '#da323f', '#d3293d', '#ca223c', '#c11a3b', '#b8163a', '#ae123a'].join(','),
+  chartColorsDiversified: ['#90caf9', '#f4d166', '#ff8a65', '#ce93d8', '#80cba9', '#ffab91', '#8097ea', '#bcaaa4', '#a57583', '#e4e498', '#9e96af', '#c6ab81', '#6972c6', '#619fc6', '#81ad81', '#f48fb1', '#82afca', '#b5b071', '#8b959b', '#7ec0b4'].join(','),
+  chartColors: ['#f4d166', '#f6c760', '#f8bc58', '#f8b252', '#f7a84a', '#f69e41', '#f49538', '#f38b2f', '#f28026', '#f0751e', '#eb6c1c', '#e4641e', '#de5d1f', '#d75521', '#cf4f22', '#c64a22', '#bc4623', '#b24223', '#a83e24', '#9e3a26'].join(',')
 };

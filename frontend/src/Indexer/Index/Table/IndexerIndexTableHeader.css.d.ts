@@ -5,9 +5,15 @@ interface CssExports {
   'added': string;
   'appProfileId': string;
   'capabilities': string;
+  'id': string;
+  'minimumSeeders': string;
+  'packSeedTime': string;
+  'preferMagnetUrl': string;
   'priority': string;
   'privacy': string;
   'protocol': string;
+  'seedRatio': string;
+  'seedTime': string;
   'sortName': string;
   'status': string;
   'tags': string;

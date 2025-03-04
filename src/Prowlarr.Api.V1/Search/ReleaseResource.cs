@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using Microsoft.AspNetCore.Routing.Constraints;
+using System.Text.Json.Serialization;
 using NzbDrone.Core.Indexers;
 using NzbDrone.Core.Parser;
 using NzbDrone.Core.Parser.Model;
@@ -24,8 +24,10 @@ namespace Prowlarr.Api.V1.Search
         public string ReleaseHash { get; set; }
         public string Title { get; set; }
         public string SortTitle { get; set; }
-        public bool Approved { get; set; }
         public int ImdbId { get; set; }
+        public int TmdbId { get; set; }
+        public int TvdbId { get; set; }
+        public int TvMazeId { get; set; }
         public DateTime PublishDate { get; set; }
         public string CommentUrl { get; set; }
         public string DownloadUrl { get; set; }
@@ -44,16 +46,19 @@ namespace Prowlarr.Api.V1.Search
         {
             get
             {
-                var extension = "torrent";
-
-                if (Protocol == DownloadProtocol.Usenet)
+                var extension = Protocol switch
                 {
-                    extension = "nzb";
-                }
+                    DownloadProtocol.Torrent => ".torrent",
+                    DownloadProtocol.Usenet => ".nzb",
+                    _ => string.Empty
+                };
 
-                return $"{Title}.{extension}";
+                return $"{Title}{extension}";
             }
         }
+
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public int? DownloadClientId { get; set; }
     }
 
     public static class ReleaseResourceMapper
@@ -61,7 +66,7 @@ namespace Prowlarr.Api.V1.Search
         public static ReleaseResource ToResource(this ReleaseInfo model)
         {
             var releaseInfo = model;
-            var torrentInfo = (model as TorrentInfo) ?? new TorrentInfo();
+            var torrentInfo = model as TorrentInfo ?? new TorrentInfo();
             var indexerFlags = torrentInfo.IndexerFlags.Select(f => f.Name);
 
             // TODO: Clean this mess up. don't mix data from multiple classes, use sub-resources instead? (Got a huge Deja Vu, didn't we talk about this already once?)
@@ -81,6 +86,9 @@ namespace Prowlarr.Api.V1.Search
                 Title = releaseInfo.Title,
                 SortTitle = releaseInfo.Title.NormalizeTitle(),
                 ImdbId = releaseInfo.ImdbId,
+                TmdbId = releaseInfo.TmdbId,
+                TvdbId = releaseInfo.TvdbId,
+                TvMazeId = releaseInfo.TvMazeId,
                 PublishDate = releaseInfo.PublishDate,
                 CommentUrl = releaseInfo.CommentUrl,
                 DownloadUrl = releaseInfo.DownloadUrl,

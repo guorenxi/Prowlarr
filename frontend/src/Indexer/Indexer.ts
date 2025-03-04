@@ -1,4 +1,5 @@
 import ModelBase from 'App/ModelBase';
+import DownloadProtocol from 'DownloadClient/DownloadProtocol';
 
 export interface IndexerStatus extends ModelBase {
   disabledTill: Date;
@@ -24,30 +25,46 @@ export interface IndexerCapabilities extends ModelBase {
   categories: IndexerCategory[];
 }
 
+export type IndexerPrivacy = 'public' | 'semiPrivate' | 'private';
+
 export interface IndexerField extends ModelBase {
+  order: number;
   name: string;
   label: string;
   advanced: boolean;
   type: string;
   value: string;
+  privacy: string;
 }
 
 interface Indexer extends ModelBase {
   name: string;
+  definitionName: string;
   description: string;
   encoding: string;
   language: string;
   added: Date;
   enable: boolean;
   redirect: boolean;
-  protocol: string;
-  privacy: string;
+  supportsRss: boolean;
+  supportsSearch: boolean;
+  supportsRedirect: boolean;
+  supportsPagination: boolean;
+  protocol: DownloadProtocol;
+  privacy: IndexerPrivacy;
   priority: number;
   fields: IndexerField[];
   tags: number[];
+  sortName: string;
   status: IndexerStatus;
   capabilities: IndexerCapabilities;
   indexerUrls: string[];
+  legacyUrls: string[];
+  appProfileId: number;
+  implementationName: string;
+  implementation: string;
+  configContract: string;
+  infoLink: string;
 }
 
 export default Indexer;

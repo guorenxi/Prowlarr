@@ -24,17 +24,6 @@ namespace NzbDrone.Core.Indexers.Definitions
         {
         }
 
-        public override IIndexerRequestGenerator GetRequestGenerator()
-        {
-            return new AvistazRequestGenerator
-            {
-                Settings = Settings,
-                HttpClient = _httpClient,
-                Logger = _logger,
-                Capabilities = Capabilities,
-            };
-        }
-
         public override IParseIndexerResponse GetParser()
         {
             return new ExoticaZParser(Capabilities.Categories);
@@ -42,7 +31,11 @@ namespace NzbDrone.Core.Indexers.Definitions
 
         protected override IndexerCapabilities SetCapabilities()
         {
-            var caps = new IndexerCapabilities();
+            var caps = new IndexerCapabilities
+            {
+                LimitsDefault = PageSize,
+                LimitsMax = PageSize
+            };
 
             caps.Categories.AddCategoryMapping(1, NewznabStandardCategory.XXXx264, "Video Clip");
             caps.Categories.AddCategoryMapping(2, NewznabStandardCategory.XXXPack, "Video Pack");
@@ -60,6 +53,8 @@ namespace NzbDrone.Core.Indexers.Definitions
     public class ExoticaZParser : AvistazParserBase
     {
         private readonly IndexerCapabilitiesCategories _categories;
+
+        protected override string TimezoneOffset => "+01:00";
 
         public ExoticaZParser(IndexerCapabilitiesCategories categories)
         {

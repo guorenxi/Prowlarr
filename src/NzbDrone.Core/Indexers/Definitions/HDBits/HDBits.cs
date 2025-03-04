@@ -11,11 +11,11 @@ namespace NzbDrone.Core.Indexers.Definitions.HDBits
         public override string[] IndexerUrls => new[] { "https://hdbits.org/" };
         public override string[] LegacyUrls => new[] { "https://hdbits.org" };
         public override string Description => "Best HD Tracker";
-        public override DownloadProtocol Protocol => DownloadProtocol.Torrent;
         public override IndexerPrivacy Privacy => IndexerPrivacy.Private;
-        public override IndexerCapabilities Capabilities => SetCapabilities();
         public override bool SupportsRedirect => true;
-        public override int PageSize => 30;
+        public override bool SupportsPagination => true;
+        public override int PageSize => 100;
+        public override IndexerCapabilities Capabilities => SetCapabilities();
 
         public HDBits(IIndexerHttpClient httpClient, IEventAggregator eventAggregator, IIndexerStatusService indexerStatusService, IConfigService configService, Logger logger)
             : base(httpClient, eventAggregator, indexerStatusService, configService, logger)
@@ -32,7 +32,7 @@ namespace NzbDrone.Core.Indexers.Definitions.HDBits
             return new HDBitsParser(Settings, Capabilities.Categories);
         }
 
-        private IndexerCapabilities SetCapabilities()
+        private static IndexerCapabilities SetCapabilities()
         {
             var caps = new IndexerCapabilities
             {
@@ -43,17 +43,22 @@ namespace NzbDrone.Core.Indexers.Definitions.HDBits
                 MovieSearchParams = new List<MovieSearchParam>
                 {
                     MovieSearchParam.Q, MovieSearchParam.ImdbId
+                },
+                Flags = new List<IndexerFlag>
+                {
+                    IndexerFlag.Internal,
+                    IndexerFlag.Exclusive,
                 }
             };
 
-            caps.Categories.AddCategoryMapping(6, NewznabStandardCategory.Audio, "Audio Track");
-            caps.Categories.AddCategoryMapping(3, NewznabStandardCategory.TVDocumentary, "Documentary");
-            caps.Categories.AddCategoryMapping(8, NewznabStandardCategory.Other, "Misc/Demo");
             caps.Categories.AddCategoryMapping(1, NewznabStandardCategory.Movies, "Movie");
+            caps.Categories.AddCategoryMapping(2, NewznabStandardCategory.TV, "TV");
+            caps.Categories.AddCategoryMapping(3, NewznabStandardCategory.TVDocumentary, "Documentary");
             caps.Categories.AddCategoryMapping(4, NewznabStandardCategory.Audio, "Music");
             caps.Categories.AddCategoryMapping(5, NewznabStandardCategory.TVSport, "Sport");
-            caps.Categories.AddCategoryMapping(2, NewznabStandardCategory.TV, "TV");
+            caps.Categories.AddCategoryMapping(6, NewznabStandardCategory.Audio, "Audio Track");
             caps.Categories.AddCategoryMapping(7, NewznabStandardCategory.XXX, "XXX");
+            caps.Categories.AddCategoryMapping(8, NewznabStandardCategory.Other, "Misc/Demo");
 
             return caps;
         }

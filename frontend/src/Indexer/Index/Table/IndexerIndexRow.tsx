@@ -1,9 +1,9 @@
 import React, { useCallback, useState } from 'react';
 import { useSelector } from 'react-redux';
-import { SelectActionType, useSelect } from 'App/SelectContext';
-import Label from 'Components/Label';
+import { useSelect } from 'App/SelectContext';
+import CheckInput from 'Components/Form/CheckInput';
 import IconButton from 'Components/Link/IconButton';
-import RelativeDateCellConnector from 'Components/Table/Cells/RelativeDateCellConnector';
+import RelativeDateCell from 'Components/Table/Cells/RelativeDateCell';
 import VirtualTableRowCell from 'Components/Table/Cells/VirtualTableRowCell';
 import VirtualTableSelectCell from 'Components/Table/Cells/VirtualTableSelectCell';
 import Column from 'Components/Table/Column';
@@ -12,11 +12,13 @@ import { icons } from 'Helpers/Props';
 import DeleteIndexerModal from 'Indexer/Delete/DeleteIndexerModal';
 import EditIndexerModalConnector from 'Indexer/Edit/EditIndexerModalConnector';
 import createIndexerIndexItemSelector from 'Indexer/Index/createIndexerIndexItemSelector';
+import Indexer from 'Indexer/Indexer';
 import IndexerTitleLink from 'Indexer/IndexerTitleLink';
-import firstCharToUpper from 'Utilities/String/firstCharToUpper';
+import { SelectStateInputProps } from 'typings/props';
 import translate from 'Utilities/String/translate';
 import CapabilitiesLabel from './CapabilitiesLabel';
 import IndexerStatusCell from './IndexerStatusCell';
+import PrivacyLabel from './PrivacyLabel';
 import ProtocolLabel from './ProtocolLabel';
 import styles from './IndexerIndexRow.css';
 
@@ -25,13 +27,14 @@ interface IndexerIndexRowProps {
   sortKey: string;
   columns: Column[];
   isSelectMode: boolean;
+  onCloneIndexerPress(id: number): void;
 }
 
 function IndexerIndexRow(props: IndexerIndexRowProps) {
-  const { indexerId, columns, isSelectMode } = props;
+  const { indexerId, columns, isSelectMode, onCloneIndexerPress } = props;
 
   const { indexer, appProfile, status, longDateFormat, timeFormat } =
-    useSelector(createIndexerIndexItemSelector(props.indexerId));
+    useSelector(createIndexerIndexItemSelector(indexerId));
 
   const {
     id,
@@ -46,7 +49,7 @@ function IndexerIndexRow(props: IndexerIndexRowProps) {
     fields,
     added,
     capabilities,
-  } = indexer;
+  } = indexer as Indexer;
 
   const baseUrl =
     fields.find((field) => field.name === 'baseUrl')?.value ??
@@ -55,7 +58,32 @@ function IndexerIndexRow(props: IndexerIndexRowProps) {
   const vipExpiration =
     fields.find((field) => field.name === 'vipExpiration')?.value ?? '';
 
-  const rssUrl = `${window.location.origin}${window.Prowlarr.urlBase}/${id}/api?t=search&extended=1&apikey=${window.Prowlarr.apiKey}`;
+  const minimumSeeders =
+    fields.find(
+      (field) => field.name === 'torrentBaseSettings.appMinimumSeeders'
+    )?.value ?? undefined;
+
+  const seedRatio =
+    fields.find((field) => field.name === 'torrentBaseSettings.seedRatio')
+      ?.value ?? undefined;
+
+  const seedTime =
+    fields.find((field) => field.name === 'torrentBaseSettings.seedTime')
+      ?.value ?? undefined;
+
+  const packSeedTime =
+    fields.find((field) => field.name === 'torrentBaseSettings.packSeedTime')
+      ?.value ?? undefined;
+
+  const preferMagnetUrl =
+    fields.find((field) => field.name === 'torrentBaseSettings.preferMagnetUrl')
+      ?.value ?? undefined;
+
+  const rssUrl = `${window.location.origin}${
+    window.Prowlarr.urlBase
+  }/${id}/api?apikey=${encodeURIComponent(
+    window.Prowlarr.apiKey
+  )}&extended=1&t=search`;
 
   const [isEditIndexerModalOpen, setIsEditIndexerModalOpen] = useState(false);
   const [isDeleteIndexerModalOpen, setIsDeleteIndexerModalOpen] =
@@ -84,9 +112,9 @@ function IndexerIndexRow(props: IndexerIndexRowProps) {
   }, []);
 
   const onSelectedChange = useCallback(
-    ({ id, value, shiftKey }) => {
+    ({ id, value, shiftKey }: SelectStateInputProps) => {
       selectDispatch({
-        type: SelectActionType.ToggleSelected,
+        type: 'toggleSelected',
         id,
         isSelected: value,
         shiftKey,
@@ -128,12 +156,25 @@ function IndexerIndexRow(props: IndexerIndexRowProps) {
           );
         }
 
+        if (name === 'id') {
+          return (
+            <VirtualTableRowCell key={name} className={styles[name]}>
+              <IndexerTitleLink
+                indexerId={indexerId}
+                title={`${indexerId}`}
+                onCloneIndexerPress={onCloneIndexerPress}
+              />
+            </VirtualTableRowCell>
+          );
+        }
+
         if (name === 'sortName') {
           return (
             <VirtualTableRowCell key={name} className={styles[name]}>
               <IndexerTitleLink
                 indexerId={indexerId}
-                indexerName={indexerName}
+                title={indexerName}
+                onCloneIndexerPress={onCloneIndexerPress}
               />
             </VirtualTableRowCell>
           );
@@ -142,7 +183,7 @@ function IndexerIndexRow(props: IndexerIndexRowProps) {
         if (name === 'privacy') {
           return (
             <VirtualTableRowCell key={name} className={styles[name]}>
-              <Label>{translate(firstCharToUpper(privacy))}</Label>
+              <PrivacyLabel privacy={privacy} />
             </VirtualTableRowCell>
           );
         }
@@ -181,7 +222,9 @@ function IndexerIndexRow(props: IndexerIndexRowProps) {
 
         if (name === 'added') {
           return (
-            <RelativeDateCellConnector
+            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+            // @ts-ignore ts(2739)
+            <RelativeDateCell
               key={name}
               className={styles[name]}
               date={added.toString()}
@@ -192,7 +235,9 @@ function IndexerIndexRow(props: IndexerIndexRowProps) {
 
         if (name === 'vipExpiration') {
           return (
-            <RelativeDateCellConnector
+            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+            // @ts-ignore ts(2739)
+            <RelativeDateCell
               key={name}
               className={styles[name]}
               date={vipExpiration}
@@ -209,10 +254,59 @@ function IndexerIndexRow(props: IndexerIndexRowProps) {
           );
         }
 
+        if (name === 'minimumSeeders') {
+          return (
+            <VirtualTableRowCell key={name} className={styles[name]}>
+              {minimumSeeders}
+            </VirtualTableRowCell>
+          );
+        }
+
+        if (name === 'seedRatio') {
+          return (
+            <VirtualTableRowCell key={name} className={styles[name]}>
+              {seedRatio}
+            </VirtualTableRowCell>
+          );
+        }
+
+        if (name === 'seedTime') {
+          return (
+            <VirtualTableRowCell key={name} className={styles[name]}>
+              {seedTime}
+            </VirtualTableRowCell>
+          );
+        }
+
+        if (name === 'packSeedTime') {
+          return (
+            <VirtualTableRowCell key={name} className={styles[name]}>
+              {packSeedTime}
+            </VirtualTableRowCell>
+          );
+        }
+
+        if (name === 'preferMagnetUrl') {
+          return (
+            <VirtualTableRowCell key={name} className={styles[name]}>
+              {preferMagnetUrl === undefined ? null : (
+                <CheckInput
+                  name="preferMagnetUrl"
+                  value={preferMagnetUrl}
+                  isDisabled={true}
+                  onChange={checkInputCallback}
+                />
+              )}
+            </VirtualTableRowCell>
+          );
+        }
+
         if (name === 'actions') {
           return (
             <VirtualTableRowCell
               key={column.name}
+              // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+              // @ts-ignore ts(2739)
               className={styles[column.name]}
             >
               <IconButton

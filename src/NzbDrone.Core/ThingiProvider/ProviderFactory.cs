@@ -91,16 +91,32 @@ namespace NzbDrone.Core.ThingiProvider
             return Active().Select(GetInstance).ToList();
         }
 
+        public bool Exists(int id)
+        {
+            return _providerRepository.Find(id) != null;
+        }
+
         public virtual TProviderDefinition Get(int id)
         {
             return _providerRepository.Get(id);
         }
 
+        public IEnumerable<TProviderDefinition> Get(IEnumerable<int> ids)
+        {
+            return _providerRepository.Get(ids);
+        }
+
+        public TProviderDefinition Find(int id)
+        {
+            return _providerRepository.Find(id);
+        }
+
         public virtual TProviderDefinition Create(TProviderDefinition definition)
         {
-            var addedDefinition = _providerRepository.Insert(definition);
-            _eventAggregator.PublishEvent(new ProviderAddedEvent<TProvider>(definition));
-            return addedDefinition;
+            var result = _providerRepository.Insert(definition);
+            _eventAggregator.PublishEvent(new ProviderAddedEvent<TProvider>(result));
+
+            return result;
         }
 
         public virtual void Update(TProviderDefinition definition)
@@ -109,10 +125,14 @@ namespace NzbDrone.Core.ThingiProvider
             _eventAggregator.PublishEvent(new ProviderUpdatedEvent<TProvider>(updatedDef));
         }
 
-        public virtual void Update(IEnumerable<TProviderDefinition> definitions)
+        public virtual IEnumerable<TProviderDefinition> Update(IEnumerable<TProviderDefinition> definitions)
         {
-            _providerRepository.UpdateMany(definitions.ToList());
-            _eventAggregator.PublishEvent(new ProviderBulkUpdatedEvent<TProvider>(definitions));
+            var providerDefinitions = definitions.ToList();
+
+            _providerRepository.UpdateMany(providerDefinitions);
+            _eventAggregator.PublishEvent(new ProviderBulkUpdatedEvent<TProvider>(providerDefinitions));
+
+            return providerDefinitions;
         }
 
         public void Delete(int id)
@@ -177,7 +197,7 @@ namespace NzbDrone.Core.ThingiProvider
 
             foreach (var invalidDefinition in storedProvider.Where(def => GetImplementation(def) == null))
             {
-                _logger.Debug("Removing {0} ", invalidDefinition.Name);
+                _logger.Warn("Removing {0}", invalidDefinition.Name);
                 _providerRepository.Delete(invalidDefinition);
             }
         }

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using DryIoc;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.DataProtection;
@@ -26,6 +27,7 @@ using NzbDrone.SignalR;
 using Prowlarr.Api.V1.System;
 using Prowlarr.Http;
 using Prowlarr.Http.Authentication;
+using Prowlarr.Http.ClientSchema;
 using Prowlarr.Http.ErrorManagement;
 using Prowlarr.Http.Frontend;
 using Prowlarr.Http.Middleware;
@@ -56,7 +58,7 @@ namespace NzbDrone.Host
 
             services.Configure<ForwardedHeadersOptions>(options =>
             {
-                options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+                options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto | ForwardedHeaders.XForwardedHost;
                 options.KnownNetworks.Clear();
                 options.KnownProxies.Clear();
             });
@@ -133,7 +135,7 @@ namespace NzbDrone.Host
                     Name = "apikey",
                     Type = SecuritySchemeType.ApiKey,
                     Scheme = "apiKey",
-                    Description = "Apikey passed as header",
+                    Description = "Apikey passed as query parameter",
                     In = ParameterLocation.Query,
                     Reference = new OpenApiReference
                     {
@@ -158,6 +160,8 @@ namespace NzbDrone.Host
                 {
                     { apikeyQuery, Array.Empty<string>() }
                 });
+
+                c.DescribeAllParametersInCamelCase();
             });
 
             services
@@ -206,6 +210,7 @@ namespace NzbDrone.Host
         }
 
         public void Configure(IApplicationBuilder app,
+                              IContainer container,
                               IStartupContext startupContext,
                               Lazy<IMainDatabase> mainDatabaseFactory,
                               Lazy<ILogDatabase> logDatabaseFactory,
@@ -225,15 +230,22 @@ namespace NzbDrone.Host
             appFolderFactory.Register();
             pidFileProvider.Write();
 
+            configFileProvider.EnsureDefaultConfigFile();
+
             reconfigureLogging.Reconfigure();
 
             EnsureSingleInstance(false, startupContext, singleInstancePolicy);
 
             // instantiate the databases to initialize/migrate them
             _ = mainDatabaseFactory.Value;
-            _ = logDatabaseFactory.Value;
 
-            dbTarget.Register();
+            if (configFileProvider.LogDbEnabled)
+            {
+                _ = logDatabaseFactory.Value;
+                dbTarget.Register();
+            }
+
+            SchemaBuilder.Initialize(container);
 
             if (OsInfo.IsNotWindows)
             {

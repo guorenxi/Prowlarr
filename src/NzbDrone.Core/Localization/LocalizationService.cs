@@ -1,12 +1,13 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using NLog;
 using NzbDrone.Common.Cache;
 using NzbDrone.Common.EnvironmentInfo;
-using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Configuration.Events;
 using NzbDrone.Core.Messaging.Events;
@@ -16,14 +17,17 @@ namespace NzbDrone.Core.Localization
     public interface ILocalizationService
     {
         Dictionary<string, string> GetLocalizationDictionary();
+
         string GetLocalizedString(string phrase);
-        string GetLocalizedString(string phrase, string language);
+        string GetLocalizedString(string phrase, Dictionary<string, object> tokens);
         IEnumerable<LocalizationOption> GetLocalizationOptions();
     }
 
     public class LocalizationService : ILocalizationService, IHandleAsync<ConfigSavedEvent>
     {
         private const string DefaultCulture = "en";
+        private static readonly Regex TokenRegex = new Regex(@"(?:\{)(?<token>[a-z0-9]+)(?:\})",
+            RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
         private readonly ICached<Dictionary<string, string>> _cache;
 
@@ -44,28 +48,23 @@ namespace NzbDrone.Core.Localization
 
         public Dictionary<string, string> GetLocalizationDictionary()
         {
-            var language = _configService.UILanguage;
+            var language = GetLanguageFileName();
 
             return GetLocalizationDictionary(language);
         }
 
         public string GetLocalizedString(string phrase)
         {
-            var language = _configService.UILanguage;
-
-            return GetLocalizedString(phrase, language);
+            return GetLocalizedString(phrase, new Dictionary<string, object>());
         }
 
-        public string GetLocalizedString(string phrase, string language)
+        public string GetLocalizedString(string phrase, Dictionary<string, object> tokens)
         {
+            var language = GetLanguageFileName();
+
             if (string.IsNullOrEmpty(phrase))
             {
                 throw new ArgumentNullException(nameof(phrase));
-            }
-
-            if (language.IsNullOrWhiteSpace())
-            {
-                language = _configService.UILanguage;
             }
 
             if (language == null)
@@ -77,7 +76,7 @@ namespace NzbDrone.Core.Localization
 
             if (dictionary.TryGetValue(phrase, out var value))
             {
-                return value;
+                return ReplaceTokens(value, tokens);
             }
 
             return phrase;
@@ -130,6 +129,30 @@ namespace NzbDrone.Core.Localization
             yield return new LocalizationOption("漢語 (繁体字)", "zh_TW");
         }
 
+        public string GetLanguageIdentifier()
+        {
+            return GetLocalizationOptions().FirstOrDefault(l => l.Value == _configService.UILanguage)?.Value ?? DefaultCulture;
+        }
+
+        private string ReplaceTokens(string input, Dictionary<string, object> tokens)
+        {
+            tokens.TryAdd("appName", "Prowlarr");
+
+            return TokenRegex.Replace(input, match =>
+            {
+                var tokenName = match.Groups["token"].Value;
+
+                tokens.TryGetValue(tokenName, out var token);
+
+                return token?.ToString() ?? $"{{{tokenName}}}";
+            });
+        }
+
+        private string GetLanguageFileName()
+        {
+            return GetLanguageIdentifier().Replace("-", "_").ToLowerInvariant();
+        }
+
         private Dictionary<string, string> GetLocalizationDictionary(string language)
         {
             if (string.IsNullOrEmpty(language))
@@ -179,21 +202,12 @@ namespace NzbDrone.Core.Localization
                 return;
             }
 
-            using (var fs = File.OpenRead(resourcePath))
-            {
-                if (fs != null)
-                {
-                    var dict = await JsonSerializer.DeserializeAsync<Dictionary<string, string>>(fs);
+            await using var fs = File.OpenRead(resourcePath);
+            var dict = await JsonSerializer.DeserializeAsync<Dictionary<string, string>>(fs);
 
-                    foreach (var key in dict.Keys)
-                    {
-                        dictionary[key] = dict[key];
-                    }
-                }
-                else
-                {
-                    _logger.Error("Missing translation/culture resource: {0}", resourcePath);
-                }
+            foreach (var key in dict.Keys)
+            {
+                dictionary[key] = dict[key];
             }
         }
 

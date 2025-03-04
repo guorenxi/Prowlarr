@@ -1,7 +1,5 @@
 using FluentValidation;
 using NzbDrone.Core.Annotations;
-using NzbDrone.Core.ThingiProvider;
-using NzbDrone.Core.Validation;
 
 namespace NzbDrone.Core.Indexers
 {
@@ -9,20 +7,33 @@ namespace NzbDrone.Core.Indexers
     {
         public IndexerCommonSettingsValidator()
         {
-            RuleFor(c => c.QueryLimit).GreaterThan(0).When(c => c.QueryLimit.HasValue).WithMessage("Should be greater than zero");
+            RuleFor(c => c.QueryLimit)
+                .GreaterThan(0)
+                .When(c => c.QueryLimit.HasValue)
+                .WithMessage("Should be greater than zero");
 
-            RuleFor(c => c.GrabLimit).GreaterThan(0).When(c => c.GrabLimit.HasValue).WithMessage("Should be greater than zero");
+            RuleFor(c => c.GrabLimit)
+                .GreaterThan(0)
+                .When(c => c.GrabLimit.HasValue)
+                .WithMessage("Should be greater than zero");
         }
     }
 
     public class IndexerBaseSettings
     {
-        private static readonly IndexerCommonSettingsValidator Validator = new ();
-
-        [FieldDefinition(1, Type = FieldType.Number, Label = "Query Limit", HelpText = "The number of queries within a rolling 24 hour period Prowlarr will allow to the site", Advanced = true)]
+        [FieldDefinition(1, Type = FieldType.Number, Label = "IndexerSettingsQueryLimit", HelpText = "IndexerSettingsQueryLimitHelpText", Advanced = true)]
         public int? QueryLimit { get; set; }
 
-        [FieldDefinition(2, Type = FieldType.Number, Label = "Grab Limit", HelpText = "The number of grabs within a rolling 24 hour period Prowlarr will allow to the site", Advanced = true)]
+        [FieldDefinition(2, Type = FieldType.Number, Label = "IndexerSettingsGrabLimit", HelpText = "IndexerSettingsGrabLimitHelpText", Advanced = true)]
         public int? GrabLimit { get; set; }
+
+        [FieldDefinition(3, Type = FieldType.Select, Label = "IndexerSettingsLimitsUnit", SelectOptions = typeof(IndexerLimitsUnit), HelpText = "IndexerSettingsLimitsUnitHelpText", Advanced = true)]
+        public int LimitsUnit { get; set; } = (int)IndexerLimitsUnit.Day;
+    }
+
+    public enum IndexerLimitsUnit
+    {
+        Day = 0,
+        Hour = 1
     }
 }

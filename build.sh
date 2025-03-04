@@ -254,7 +254,7 @@ InstallInno()
     ProgressStart "Installing portable Inno Setup"
     
     rm -rf _inno
-    curl -s --output innosetup.exe "https://files.jrsoftware.org/is/6/innosetup-${INNOVERSION:-6.2.0}.exe"
+    curl -s --output innosetup.exe "https://files.jrsoftware.org/is/6/innosetup-${INNOVERSION:-6.2.2}.exe"
     mkdir _inno
     ./innosetup.exe //portable=1 //silent //currentuser //dir=.\\_inno
     rm innosetup.exe
@@ -392,20 +392,19 @@ then
     fi
 fi
 
-if [ "$FRONTEND" = "YES" ];
+if [[ "$LINT" = "YES" || "$FRONTEND" = "YES" ]];
 then
     YarnInstall
-    RunWebpack
 fi
 
 if [ "$LINT" = "YES" ];
 then
-    if [ -z "$FRONTEND" ];
-    then
-        YarnInstall
-    fi
-    
     LintUI
+fi
+
+if [ "$FRONTEND" = "YES" ];
+then
+    RunWebpack
 fi
 
 if [ "$PACKAGES" = "YES" ];

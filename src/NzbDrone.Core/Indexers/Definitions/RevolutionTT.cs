@@ -26,7 +26,6 @@ namespace NzbDrone.Core.Indexers.Definitions
         public override string[] IndexerUrls => new[] { "https://revolutiontt.me/" };
         public override string Description => "The Revolution has begun";
         private string LoginUrl => Settings.BaseUrl + "takelogin.php";
-        public override DownloadProtocol Protocol => DownloadProtocol.Torrent;
         public override IndexerPrivacy Privacy => IndexerPrivacy.Private;
         public override IndexerCapabilities Capabilities => SetCapabilities();
 
@@ -250,7 +249,7 @@ namespace NzbDrone.Core.Indexers.Definitions
             var torrentInfos = new List<TorrentInfo>();
 
             var parser = new HtmlParser();
-            var dom = parser.ParseDocument(indexerResponse.Content);
+            using var dom = parser.ParseDocument(indexerResponse.Content);
             var rows = dom.QuerySelectorAll("#torrents-table > tbody > tr");
 
             foreach (var row in rows.Skip(1))
@@ -286,7 +285,7 @@ namespace NzbDrone.Core.Indexers.Definitions
                 var category = row.QuerySelector(".br_type > a").GetAttribute("href").Replace("browse.php?cat=", string.Empty);
 
                 var qImdb = row.QuerySelector("a[href*=\"www.imdb.com/\"]");
-                var imdb = qImdb != null ? ParseUtil.GetImdbID(qImdb.GetAttribute("href").Split('/').Last()) : null;
+                var imdb = qImdb != null ? ParseUtil.GetImdbId(qImdb.GetAttribute("href").Split('/').Last()) : null;
 
                 var release = new TorrentInfo
                 {

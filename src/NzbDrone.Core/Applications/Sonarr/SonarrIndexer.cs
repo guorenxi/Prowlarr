@@ -30,13 +30,20 @@ namespace NzbDrone.Core.Applications.Sonarr
             }
 
             var baseUrl = (string)Fields.FirstOrDefault(x => x.Name == "baseUrl").Value == (string)other.Fields.FirstOrDefault(x => x.Name == "baseUrl").Value;
-            var apiKey = (string)Fields.FirstOrDefault(x => x.Name == "apiKey").Value == (string)other.Fields.FirstOrDefault(x => x.Name == "apiKey").Value;
             var cats = JToken.DeepEquals((JArray)Fields.FirstOrDefault(x => x.Name == "categories").Value, (JArray)other.Fields.FirstOrDefault(x => x.Name == "categories").Value);
             var animeCats = JToken.DeepEquals((JArray)Fields.FirstOrDefault(x => x.Name == "animeCategories").Value, (JArray)other.Fields.FirstOrDefault(x => x.Name == "animeCategories").Value);
+
+            var apiKey = (string)Fields.FirstOrDefault(x => x.Name == "apiKey")?.Value;
+            var otherApiKey = (string)other.Fields.FirstOrDefault(x => x.Name == "apiKey")?.Value;
+            var apiKeyCompare = apiKey == otherApiKey || otherApiKey == "********";
 
             var apiPath = Fields.FirstOrDefault(x => x.Name == "apiPath")?.Value == null ? null : Fields.FirstOrDefault(x => x.Name == "apiPath").Value;
             var otherApiPath = other.Fields.FirstOrDefault(x => x.Name == "apiPath")?.Value == null ? null : other.Fields.FirstOrDefault(x => x.Name == "apiPath").Value;
             var apiPathCompare = apiPath.Equals(otherApiPath);
+
+            var animeStandardFormatSearch = Fields.FirstOrDefault(x => x.Name == "animeStandardFormatSearch")?.Value == null ? null : (bool?)Convert.ToBoolean(Fields.FirstOrDefault(x => x.Name == "animeStandardFormatSearch").Value);
+            var otherAnimeStandardFormatSearch = other.Fields.FirstOrDefault(x => x.Name == "animeStandardFormatSearch")?.Value == null ? null : (bool?)Convert.ToBoolean(other.Fields.FirstOrDefault(x => x.Name == "animeStandardFormatSearch").Value);
+            var animeStandardFormatSearchCompare = animeStandardFormatSearch == otherAnimeStandardFormatSearch;
 
             var minimumSeeders = Fields.FirstOrDefault(x => x.Name == "minimumSeeders")?.Value == null ? null : (int?)Convert.ToInt32(Fields.FirstOrDefault(x => x.Name == "minimumSeeders").Value);
             var otherMinimumSeeders = other.Fields.FirstOrDefault(x => x.Name == "minimumSeeders")?.Value == null ? null : (int?)Convert.ToInt32(other.Fields.FirstOrDefault(x => x.Name == "minimumSeeders").Value);
@@ -54,6 +61,10 @@ namespace NzbDrone.Core.Applications.Sonarr
             var otherSeedRatio = other.Fields.FirstOrDefault(x => x.Name == "seedCriteria.seedRatio")?.Value == null ? null : (double?)Convert.ToDouble(other.Fields.FirstOrDefault(x => x.Name == "seedCriteria.seedRatio").Value);
             var seedRatioCompare = seedRatio == otherSeedRatio;
 
+            var rejectBlocklistedTorrentHashesWhileGrabbing = Fields.FirstOrDefault(x => x.Name == "rejectBlocklistedTorrentHashesWhileGrabbing")?.Value == null ? null : (bool?)Convert.ToBoolean(Fields.FirstOrDefault(x => x.Name == "rejectBlocklistedTorrentHashesWhileGrabbing").Value);
+            var otherRejectBlocklistedTorrentHashesWhileGrabbing = other.Fields.FirstOrDefault(x => x.Name == "rejectBlocklistedTorrentHashesWhileGrabbing")?.Value == null ? null : (bool?)Convert.ToBoolean(other.Fields.FirstOrDefault(x => x.Name == "rejectBlocklistedTorrentHashesWhileGrabbing").Value);
+            var rejectBlocklistedTorrentHashesWhileGrabbingCompare = rejectBlocklistedTorrentHashesWhileGrabbing == otherRejectBlocklistedTorrentHashesWhileGrabbing;
+
             return other.EnableRss == EnableRss &&
                 other.EnableAutomaticSearch == EnableAutomaticSearch &&
                 other.EnableInteractiveSearch == EnableInteractiveSearch &&
@@ -61,7 +72,7 @@ namespace NzbDrone.Core.Applications.Sonarr
                 other.Implementation == Implementation &&
                 other.Priority == Priority &&
                 other.Id == Id &&
-                apiKey && apiPathCompare && baseUrl && cats && animeCats && minimumSeedersCompare && seedRatioCompare && seedTimeCompare && seasonSeedTimeCompare;
+                apiKeyCompare && apiPathCompare && baseUrl && cats && animeCats && animeStandardFormatSearchCompare && minimumSeedersCompare && seedRatioCompare && seedTimeCompare && seasonSeedTimeCompare && rejectBlocklistedTorrentHashesWhileGrabbingCompare;
         }
     }
 }

@@ -1,7 +1,9 @@
 using System.Linq;
 using System.Reflection;
+using FluentValidation;
 using Microsoft.AspNetCore.Mvc;
 using NzbDrone.Core.Configuration;
+using NzbDrone.Core.Localization;
 using NzbDrone.Http.REST.Attributes;
 using Prowlarr.Http;
 
@@ -12,14 +14,28 @@ namespace Prowlarr.Api.V1.Config
     {
         private readonly IConfigFileProvider _configFileProvider;
 
-        public UiConfigController(IConfigFileProvider configFileProvider, IConfigService configService)
+        public UiConfigController(IConfigFileProvider configFileProvider, IConfigService configService, ILocalizationService localizationService)
             : base(configService)
         {
             _configFileProvider = configFileProvider;
+
+            SharedValidator.RuleFor(c => c.UILanguage)
+                           .NotEmpty()
+                           .WithMessage("The UI Language value cannot be empty");
+
+            SharedValidator.RuleFor(c => c.UILanguage).Custom((value, context) =>
+            {
+                if (!localizationService.GetLocalizationOptions().Any(o => o.Value == value))
+                {
+                    context.AddFailure("Invalid UI Language value");
+                }
+            });
         }
 
         [RestPutById]
-        public override ActionResult<UiConfigResource> SaveConfig(UiConfigResource resource)
+        [Consumes("application/json")]
+        [Produces("application/json")]
+        public override ActionResult<UiConfigResource> SaveConfig([FromBody] UiConfigResource resource)
         {
             var dictionary = resource.GetType()
                                      .GetProperties(BindingFlags.Instance | BindingFlags.Public)

@@ -11,6 +11,7 @@ using NzbDrone.Core.Indexers;
 using NzbDrone.Core.Indexers.Definitions;
 using NzbDrone.Core.Indexers.Definitions.Gazelle;
 using NzbDrone.Core.IndexerSearch.Definitions;
+using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.Test.Framework;
 
 namespace NzbDrone.Core.Test.IndexerTests.SecretCinemaTests
@@ -21,10 +22,10 @@ namespace NzbDrone.Core.Test.IndexerTests.SecretCinemaTests
         [SetUp]
         public void Setup()
         {
-            Subject.Definition = new IndexerDefinition()
+            Subject.Definition = new IndexerDefinition
             {
                 Name = "SecretCinema",
-                Settings = new GazelleSettings() { Username = "somekey", Password = "somekey" }
+                Settings = new GazelleSettings { Username = "somekey", Password = "somekey" }
             };
         }
 
@@ -37,20 +38,20 @@ namespace NzbDrone.Core.Test.IndexerTests.SecretCinemaTests
                 .Setup(o => o.ExecuteProxiedAsync(It.Is<HttpRequest>(v => v.Method == HttpMethod.Get), Subject.Definition))
                 .Returns<HttpRequest, IndexerDefinition>((r, d) => Task.FromResult(new HttpResponse(r, new HttpHeader { { "Content-Type", "application/json" } }, new CookieCollection(), recentFeed)));
 
-            var releases = (await Subject.Fetch(new BasicSearchCriteria { Categories = new int[] { 2000 } })).Releases;
+            var releases = (await Subject.Fetch(new BasicSearchCriteria { Categories = new[] { 2000 } })).Releases;
 
             releases.Should().HaveCount(3);
-            releases.First().Should().BeOfType<GazelleInfo>();
+            releases.First().Should().BeOfType<TorrentInfo>();
 
-            var torrentInfo = releases.First() as GazelleInfo;
+            var torrentInfo = releases.First() as TorrentInfo;
 
             torrentInfo.Title.Should().Be("Singin' in the Rain (1952) 2160p");
             torrentInfo.DownloadProtocol.Should().Be(DownloadProtocol.Torrent);
-            torrentInfo.DownloadUrl.Should().Be("https://secret-cinema.pw/torrents.php?action=download&useToken=0&id=45068");
+            torrentInfo.DownloadUrl.Should().Be("https://secret-cinema.pw/torrents.php?action=download&id=45068");
             torrentInfo.InfoUrl.Should().Be("https://secret-cinema.pw/torrents.php?id=2497&torrentid=45068");
             torrentInfo.CommentUrl.Should().BeNullOrEmpty();
             torrentInfo.Indexer.Should().Be(Subject.Definition.Name);
-            torrentInfo.PublishDate.Should().Be(DateTime.Parse("2022-12-15 19:37:29"));
+            torrentInfo.PublishDate.Should().Be(DateTime.Parse("2022-12-15 17:37:29"));
             torrentInfo.Size.Should().Be(57473058680);
             torrentInfo.InfoHash.Should().Be(null);
             torrentInfo.MagnetUrl.Should().Be(null);

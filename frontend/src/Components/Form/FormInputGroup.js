@@ -5,11 +5,11 @@ import { inputTypes, kinds } from 'Helpers/Props';
 import translate from 'Utilities/String/translate';
 import AppProfileSelectInputConnector from './AppProfileSelectInputConnector';
 import AutoCompleteInput from './AutoCompleteInput';
-import AvailabilitySelectInput from './AvailabilitySelectInput';
 import CaptchaInputConnector from './CaptchaInputConnector';
 import CardigannCaptchaInputConnector from './CardigannCaptchaInputConnector';
 import CheckInput from './CheckInput';
 import DeviceInputConnector from './DeviceInputConnector';
+import DownloadClientSelectInputConnector from './DownloadClientSelectInputConnector';
 import EnhancedSelectInput from './EnhancedSelectInput';
 import EnhancedSelectInputConnector from './EnhancedSelectInputConnector';
 import FormInputHelpText from './FormInputHelpText';
@@ -35,9 +35,6 @@ function getComponent(type) {
 
     case inputTypes.AUTO_COMPLETE:
       return AutoCompleteInput;
-
-    case inputTypes.AVAILABILITY_SELECT:
-      return AvailabilitySelectInput;
 
     case inputTypes.CAPTCHA:
       return CaptchaInputConnector;
@@ -71,6 +68,9 @@ function getComponent(type) {
 
     case inputTypes.CATEGORY_SELECT:
       return NewznabCategorySelectInputConnector;
+
+    case inputTypes.DOWNLOAD_CLIENT_SELECT:
+      return DownloadClientSelectInputConnector;
 
     case inputTypes.INDEXER_FLAGS_SELECT:
       return IndexerFlagsSelectInputConnector;
@@ -256,14 +256,18 @@ FormInputGroup.propTypes = {
   name: PropTypes.string.isRequired,
   value: PropTypes.any,
   values: PropTypes.arrayOf(PropTypes.any),
+  isFloat: PropTypes.bool,
   type: PropTypes.string.isRequired,
   kind: PropTypes.oneOf(kinds.all),
+  min: PropTypes.number,
+  max: PropTypes.number,
   unit: PropTypes.string,
   buttons: PropTypes.oneOfType([PropTypes.node, PropTypes.arrayOf(PropTypes.node)]),
   helpText: PropTypes.string,
   helpTexts: PropTypes.arrayOf(PropTypes.string),
   helpTextWarning: PropTypes.string,
   helpLink: PropTypes.string,
+  autoFocus: PropTypes.bool,
   includeNoChange: PropTypes.bool,
   includeNoChangeDisabled: PropTypes.bool,
   selectedValueOptions: PropTypes.object,

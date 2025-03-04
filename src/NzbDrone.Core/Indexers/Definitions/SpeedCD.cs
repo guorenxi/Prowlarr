@@ -33,8 +33,8 @@ public class SpeedCD : TorrentIndexerBase<SpeedCDSettings>
     public override string Description => "Your home now!";
     public override string Language => "en-US";
     public override Encoding Encoding => Encoding.UTF8;
-    public override DownloadProtocol Protocol => DownloadProtocol.Torrent;
     public override IndexerPrivacy Privacy => IndexerPrivacy.Private;
+    public override bool SupportsPagination => true;
     public override IndexerCapabilities Capabilities => SetCapabilities();
 
     public SpeedCD(IIndexerHttpClient httpClient,
@@ -96,7 +96,7 @@ public class SpeedCD : TorrentIndexerBase<SpeedCDSettings>
         if (CheckIfLoginNeeded(response))
         {
             var parser = new HtmlParser();
-            var dom = parser.ParseDocument(response.Content);
+            using var dom = parser.ParseDocument(response.Content);
             var errorMessage = dom.QuerySelector("h5")?.TextContent.Trim();
 
             if (response.Content.Contains("Wrong Captcha!"))
@@ -190,41 +190,6 @@ public class SpeedCDRequestGenerator : IIndexerRequestGenerator
         _encoding = encoding;
     }
 
-    private IEnumerable<IndexerRequest> GetPagedRequests(string term, int[] categories, bool deep = false)
-    {
-        var parameters = new List<string>();
-
-        var catList = _capabilities.Categories.MapTorznabCapsToTrackers(categories);
-        foreach (var cat in catList)
-        {
-            parameters.Add(cat);
-        }
-
-        if (_settings.FreeleechOnly)
-        {
-            parameters.Add("freeleech");
-        }
-
-        if (_settings.ExcludeArchives)
-        {
-            parameters.Add("norar");
-        }
-
-        if (deep)
-        {
-            parameters.Add("deep");
-        }
-
-        parameters.Add("q");
-        parameters.Add(term.UrlEncode(_encoding));
-
-        var searchUrl = $"{_settings.BaseUrl.TrimEnd('/')}/browse/{string.Join("/", parameters)}";
-
-        var request = new IndexerRequest(searchUrl, HttpAccept.Html);
-
-        yield return request;
-    }
-
     public IndexerPageableRequestChain GetSearchRequests(MovieSearchCriteria searchCriteria)
     {
         var pageableRequests = new IndexerPageableRequestChain();
@@ -236,7 +201,7 @@ public class SpeedCDRequestGenerator : IIndexerRequestGenerator
             term = $"{searchCriteria.FullImdbId}";
         }
 
-        pageableRequests.Add(GetPagedRequests(term.Trim(), searchCriteria.Categories, searchCriteria.FullImdbId.IsNotNullOrWhiteSpace()));
+        pageableRequests.Add(GetPagedRequests(term.Trim(), searchCriteria, searchCriteria.FullImdbId.IsNotNullOrWhiteSpace()));
 
         return pageableRequests;
     }
@@ -245,7 +210,7 @@ public class SpeedCDRequestGenerator : IIndexerRequestGenerator
     {
         var pageableRequests = new IndexerPageableRequestChain();
 
-        pageableRequests.Add(GetPagedRequests($"{searchCriteria.SanitizedSearchTerm}", searchCriteria.Categories));
+        pageableRequests.Add(GetPagedRequests($"{searchCriteria.SanitizedSearchTerm}", searchCriteria));
 
         return pageableRequests;
     }
@@ -271,7 +236,7 @@ public class SpeedCDRequestGenerator : IIndexerRequestGenerator
             }
         }
 
-        pageableRequests.Add(GetPagedRequests(term.Trim(), searchCriteria.Categories, searchCriteria.FullImdbId.IsNotNullOrWhiteSpace()));
+        pageableRequests.Add(GetPagedRequests(term.Trim(), searchCriteria, searchCriteria.FullImdbId.IsNotNullOrWhiteSpace()));
 
         return pageableRequests;
     }
@@ -280,7 +245,7 @@ public class SpeedCDRequestGenerator : IIndexerRequestGenerator
     {
         var pageableRequests = new IndexerPageableRequestChain();
 
-        pageableRequests.Add(GetPagedRequests($"{searchCriteria.SanitizedSearchTerm}", searchCriteria.Categories));
+        pageableRequests.Add(GetPagedRequests($"{searchCriteria.SanitizedSearchTerm}", searchCriteria));
 
         return pageableRequests;
     }
@@ -289,9 +254,53 @@ public class SpeedCDRequestGenerator : IIndexerRequestGenerator
     {
         var pageableRequests = new IndexerPageableRequestChain();
 
-        pageableRequests.Add(GetPagedRequests($"{searchCriteria.SanitizedSearchTerm}", searchCriteria.Categories));
+        pageableRequests.Add(GetPagedRequests($"{searchCriteria.SanitizedSearchTerm}", searchCriteria));
 
         return pageableRequests;
+    }
+
+    private IEnumerable<IndexerRequest> GetPagedRequests(string term, SearchCriteriaBase searchCriteria, bool deep = false)
+    {
+        var parameters = new List<string>();
+
+        var catList = _capabilities.Categories.MapTorznabCapsToTrackers(searchCriteria.Categories);
+        foreach (var cat in catList)
+        {
+            parameters.Add(cat);
+        }
+
+        if (_settings.FreeleechOnly)
+        {
+            parameters.Add("freeleech");
+        }
+
+        if (_settings.ExcludeArchives)
+        {
+            parameters.Add("norar");
+        }
+
+        if (deep)
+        {
+            parameters.Add("deep");
+        }
+
+        if (term.IsNotNullOrWhiteSpace())
+        {
+            parameters.Add("q");
+            parameters.Add(term.UrlEncode(_encoding));
+        }
+
+        if (searchCriteria.Limit is > 0 && searchCriteria.Offset is > 0)
+        {
+            var page = (int)(searchCriteria.Offset / searchCriteria.Limit) + 1;
+
+            parameters.Add("p");
+            parameters.Add(page.ToString());
+        }
+
+        var searchUrl = $"{_settings.BaseUrl.TrimEnd('/')}/browse/{string.Join("/", parameters)}";
+
+        yield return new IndexerRequest(searchUrl, HttpAccept.Html);
     }
 
     public Func<IDictionary<string, string>> GetCookies { get; set; }
@@ -314,7 +323,7 @@ public class SpeedCDParser : IParseIndexerResponse
         var releaseInfos = new List<ReleaseInfo>();
 
         var parser = new HtmlParser();
-        var dom = parser.ParseDocument(indexerResponse.Content);
+        using var dom = parser.ParseDocument(indexerResponse.Content);
 
         var rows = dom.QuerySelectorAll("div.boxContent > table > tbody > tr");
         foreach (var row in rows)

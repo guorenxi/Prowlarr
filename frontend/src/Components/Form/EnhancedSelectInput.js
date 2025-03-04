@@ -20,6 +20,8 @@ import HintedSelectInputSelectedValue from './HintedSelectInputSelectedValue';
 import TextInput from './TextInput';
 import styles from './EnhancedSelectInput.css';
 
+const MINIMUM_DISTANCE_FROM_EDGE = 10;
+
 function isArrowKey(keyCode) {
   return keyCode === keyCodes.UP_ARROW || keyCode === keyCodes.DOWN_ARROW;
 }
@@ -137,18 +139,9 @@ class EnhancedSelectInput extends Component {
   // Listeners
 
   onComputeMaxHeight = (data) => {
-    const {
-      top,
-      bottom
-    } = data.offsets.reference;
-
     const windowHeight = window.innerHeight;
 
-    if ((/^botton/).test(data.placement)) {
-      data.styles.maxHeight = windowHeight - bottom;
-    } else {
-      data.styles.maxHeight = top;
-    }
+    data.styles.maxHeight = windowHeight - MINIMUM_DISTANCE_FROM_EDGE;
 
     return data;
   };
@@ -271,26 +264,29 @@ class EnhancedSelectInput extends Component {
     this.setState({ isOpen: !this.state.isOpen });
   };
 
-  onSelect = (value) => {
-    if (Array.isArray(this.props.value)) {
-      let newValue = null;
-      const index = this.props.value.indexOf(value);
+  onSelect = (newValue) => {
+    const { name, value, values, onChange } = this.props;
+
+    if (Array.isArray(value)) {
+      let arrayValue = null;
+      const index = value.indexOf(newValue);
+
       if (index === -1) {
-        newValue = this.props.values.map((v) => v.key).filter((v) => (v === value) || this.props.value.includes(v));
+        arrayValue = values.map((v) => v.key).filter((v) => (v === newValue) || value.includes(v));
       } else {
-        newValue = [...this.props.value];
-        newValue.splice(index, 1);
+        arrayValue = [...value];
+        arrayValue.splice(index, 1);
       }
-      this.props.onChange({
-        name: this.props.name,
-        value: newValue
+      onChange({
+        name,
+        value: arrayValue
       });
     } else {
       this.setState({ isOpen: false });
 
-      this.props.onChange({
-        name: this.props.name,
-        value
+      onChange({
+        name,
+        value: newValue
       });
     }
   };
@@ -457,6 +453,10 @@ class EnhancedSelectInput extends Component {
                   order: 851,
                   enabled: true,
                   fn: this.onComputeMaxHeight
+                },
+                preventOverflow: {
+                  enabled: true,
+                  boundariesElement: 'viewport'
                 }
               }}
             >
@@ -485,7 +485,7 @@ class EnhancedSelectInput extends Component {
                             values.map((v, index) => {
                               const hasParent = v.parentKey !== undefined;
                               const depth = hasParent ? 1 : 0;
-                              const parentSelected = hasParent && value.includes(v.parentKey);
+                              const parentSelected = hasParent && Array.isArray(value) && value.includes(v.parentKey);
                               return (
                                 <OptionComponent
                                   key={v.key}
@@ -578,7 +578,7 @@ EnhancedSelectInput.propTypes = {
   className: PropTypes.string,
   disabledClassName: PropTypes.string,
   name: PropTypes.string.isRequired,
-  value: PropTypes.oneOfType([PropTypes.string, PropTypes.number, PropTypes.arrayOf(PropTypes.number)]).isRequired,
+  value: PropTypes.oneOfType([PropTypes.string, PropTypes.number, PropTypes.arrayOf(PropTypes.string), PropTypes.arrayOf(PropTypes.number)]).isRequired,
   values: PropTypes.arrayOf(PropTypes.object).isRequired,
   isDisabled: PropTypes.bool.isRequired,
   isFetching: PropTypes.bool.isRequired,

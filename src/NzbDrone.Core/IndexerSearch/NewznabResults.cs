@@ -22,7 +22,7 @@ namespace NzbDrone.Core.IndexerSearch
             @"(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F\uFEFF\uFFFE\uFFFF]",
             RegexOptions.Compiled);
 
-        public List<ReleaseInfo> Releases { get; set; }
+        public IList<ReleaseInfo> Releases { get; set; }
 
         private static string RemoveInvalidXMLChars(string text)
         {
@@ -54,7 +54,7 @@ namespace NzbDrone.Core.IndexerSearch
             return new XElement(feedNamespace + "attr", new XAttribute("name", name), new XAttribute("value", value));
         }
 
-        public string ToXml(DownloadProtocol protocol)
+        public string ToXml(DownloadProtocol protocol, bool preferMagnetUrl = false)
         {
             // IMPORTANT: We can't use Uri.ToString(), because it generates URLs without URL encode (links with unicode
             // characters are broken). We must use Uri.AbsoluteUri instead that handles encoding correctly
@@ -73,19 +73,24 @@ namespace NzbDrone.Core.IndexerSearch
                         new XElement("title", "Prowlarr"),
                         from r in Releases
                         let t = (r as TorrentInfo) ?? new TorrentInfo()
+                        let downloadUrl = preferMagnetUrl ? t.MagnetUrl ?? r.DownloadUrl : r.DownloadUrl ?? t.MagnetUrl
                         select new XElement("item",
                             new XElement("title", RemoveInvalidXMLChars(r.Title)),
                             new XElement("description", RemoveInvalidXMLChars(r.Description)),
-                            new XElement("guid", r.Guid),  // GUID and (Link or Magnet) are mandatory
-                            new XElement("prowlarrindexer", new XAttribute("id", r.IndexerId), r.Indexer),
+                            new XElement("guid", r.Guid), // GUID and (Link or Magnet) are mandatory
+                            new XElement(
+                                "prowlarrindexer",
+                                new XAttribute("id", r.IndexerId),
+                                new XAttribute("type", r.IndexerPrivacy switch { IndexerPrivacy.Private => "private", IndexerPrivacy.Public => "public", _ => "semi-private" }),
+                                r.Indexer),
                             r.InfoUrl == null ? null : new XElement("comments", r.InfoUrl),
                             r.PublishDate == DateTime.MinValue ? new XElement("pubDate", XmlDateFormat(DateTime.Now)) : new XElement("pubDate", XmlDateFormat(r.PublishDate)),
                             new XElement("size", r.Size),
-                            new XElement("link", r.DownloadUrl ?? t.MagnetUrl ?? string.Empty),
+                            new XElement("link", downloadUrl ?? string.Empty),
                             r.Categories == null ? null : from c in r.Categories select new XElement("category", c.Id),
                             new XElement(
                                 "enclosure",
-                                new XAttribute("url", r.DownloadUrl ?? t.MagnetUrl ?? string.Empty),
+                                new XAttribute("url", downloadUrl ?? string.Empty),
                                 r.Size == null ? null : new XAttribute("length", r.Size),
                                 new XAttribute("type", protocol == DownloadProtocol.Torrent ? "application/x-bittorrent" : "application/x-nzb")),
                             r.Categories == null ? null : from c in r.Categories select GetNabElement("category", c.Id, protocol),
@@ -104,6 +109,7 @@ namespace NzbDrone.Core.IndexerSearch
                             GetNabElement("files", r.Files, protocol),
                             GetNabElement("grabs", r.Grabs, protocol),
                             GetNabElement("peers", t.Peers, protocol),
+                            r.Year == 0 ? null : GetNabElement("year", r.Year, protocol),
                             GetNabElement("author", RemoveInvalidXMLChars(r.Author), protocol),
                             GetNabElement("booktitle", RemoveInvalidXMLChars(r.BookTitle), protocol),
                             GetNabElement("artist", RemoveInvalidXMLChars(r.Artist), protocol),

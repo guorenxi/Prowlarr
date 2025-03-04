@@ -7,6 +7,7 @@ using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Http;
 using NzbDrone.Core.Annotations;
 using NzbDrone.Core.Configuration;
+using NzbDrone.Core.Indexers.Exceptions;
 using NzbDrone.Core.Indexers.Settings;
 using NzbDrone.Core.IndexerSearch.Definitions;
 using NzbDrone.Core.Messaging.Events;
@@ -20,19 +21,23 @@ namespace NzbDrone.Core.Indexers.Definitions
         public override string Name => "TorrentDay";
         public override string[] IndexerUrls => new[]
         {
-            "https://torrentday.cool/",
             "https://tday.love/",
+            "https://torrentday.cool/",
             "https://secure.torrentday.com/",
             "https://classic.torrentday.com/",
             "https://www.torrentday.com/",
+            "https://www.torrentday.me/",
             "https://torrentday.it/",
             "https://td.findnemo.net/",
             "https://td.getcrazy.me/",
             "https://td.venom.global/",
-            "https://td.workisboring.net/"
+            "https://td.workisboring.net/",
+            "https://tday.findnemo.net/",
+            "https://tday.getcrazy.me/",
+            "https://tday.venom.global/",
+            "https://tday.workisboring.net/"
         };
         public override string Description => "TorrentDay (TD) is a Private site for TV / MOVIES / GENERAL";
-        public override DownloadProtocol Protocol => DownloadProtocol.Torrent;
         public override IndexerPrivacy Privacy => IndexerPrivacy.Private;
         public override IndexerCapabilities Capabilities => SetCapabilities();
 
@@ -48,7 +53,7 @@ namespace NzbDrone.Core.Indexers.Definitions
 
         public override IParseIndexerResponse GetParser()
         {
-            return new TorrentDayParser(Settings, Capabilities.Categories);
+            return new TorrentDayParser(Settings, Capabilities.Categories, _logger);
         }
 
         protected override IDictionary<string, string> GetCookies()
@@ -78,14 +83,6 @@ namespace NzbDrone.Core.Indexers.Definitions
                 }
             };
 
-            caps.Categories.AddCategoryMapping(29, NewznabStandardCategory.TVAnime, "Anime");
-            caps.Categories.AddCategoryMapping(28, NewznabStandardCategory.PC, "Appz/Packs");
-            caps.Categories.AddCategoryMapping(42, NewznabStandardCategory.AudioAudiobook, "Audio Books");
-            caps.Categories.AddCategoryMapping(20, NewznabStandardCategory.Books, "Books");
-            caps.Categories.AddCategoryMapping(30, NewznabStandardCategory.TVDocumentary, "Documentary");
-            caps.Categories.AddCategoryMapping(47, NewznabStandardCategory.Other, "Fonts");
-            caps.Categories.AddCategoryMapping(43, NewznabStandardCategory.PCMac, "Mac");
-
             caps.Categories.AddCategoryMapping(96, NewznabStandardCategory.MoviesUHD, "Movie/4K");
             caps.Categories.AddCategoryMapping(25, NewznabStandardCategory.MoviesSD, "Movies/480p");
             caps.Categories.AddCategoryMapping(11, NewznabStandardCategory.MoviesBluRay, "Movies/Bluray");
@@ -98,31 +95,43 @@ namespace NzbDrone.Core.Indexers.Definitions
             caps.Categories.AddCategoryMapping(48, NewznabStandardCategory.Movies, "Movies/x265");
             caps.Categories.AddCategoryMapping(1, NewznabStandardCategory.MoviesSD, "Movies/XviD");
 
-            caps.Categories.AddCategoryMapping(17, NewznabStandardCategory.AudioMP3, "Music/Audio");
-            caps.Categories.AddCategoryMapping(23, NewznabStandardCategory.AudioForeign, "Music/Non-English");
-            caps.Categories.AddCategoryMapping(41, NewznabStandardCategory.Audio, "Music/Packs");
-            caps.Categories.AddCategoryMapping(16, NewznabStandardCategory.AudioVideo, "Music/Video");
-            caps.Categories.AddCategoryMapping(27, NewznabStandardCategory.Audio, "Music/Flac");
-
-            caps.Categories.AddCategoryMapping(45, NewznabStandardCategory.AudioOther, "Podcast");
-
-            caps.Categories.AddCategoryMapping(4, NewznabStandardCategory.PCGames, "PC/Games");
-            caps.Categories.AddCategoryMapping(18, NewznabStandardCategory.ConsolePS3, "PS3");
-            caps.Categories.AddCategoryMapping(8, NewznabStandardCategory.ConsolePSP, "PSP");
-            caps.Categories.AddCategoryMapping(10, NewznabStandardCategory.ConsoleWii, "Wii");
-            caps.Categories.AddCategoryMapping(9, NewznabStandardCategory.ConsoleXBox360, "Xbox-360");
-
             caps.Categories.AddCategoryMapping(24, NewznabStandardCategory.TVSD, "TV/480p");
             caps.Categories.AddCategoryMapping(32, NewznabStandardCategory.TVHD, "TV/Bluray");
             caps.Categories.AddCategoryMapping(31, NewznabStandardCategory.TVSD, "TV/DVD-R");
             caps.Categories.AddCategoryMapping(33, NewznabStandardCategory.TVSD, "TV/DVD-Rip");
             caps.Categories.AddCategoryMapping(46, NewznabStandardCategory.TVSD, "TV/Mobile");
+            caps.Categories.AddCategoryMapping(82, NewznabStandardCategory.TVForeign, "TV/Non-English");
             caps.Categories.AddCategoryMapping(14, NewznabStandardCategory.TV, "TV/Packs");
             caps.Categories.AddCategoryMapping(26, NewznabStandardCategory.TVSD, "TV/SD/x264");
             caps.Categories.AddCategoryMapping(7, NewznabStandardCategory.TVHD, "TV/x264");
             caps.Categories.AddCategoryMapping(34, NewznabStandardCategory.TVUHD, "TV/x265");
             caps.Categories.AddCategoryMapping(2, NewznabStandardCategory.TVSD, "TV/XviD");
 
+            caps.Categories.AddCategoryMapping(4, NewznabStandardCategory.PCGames, "PC/Games");
+            caps.Categories.AddCategoryMapping(18, NewznabStandardCategory.ConsolePS3, "PS");
+            caps.Categories.AddCategoryMapping(8, NewznabStandardCategory.ConsolePSP, "PSP");
+            caps.Categories.AddCategoryMapping(10, NewznabStandardCategory.ConsoleNDS, "Nintendo");
+            caps.Categories.AddCategoryMapping(9, NewznabStandardCategory.ConsoleXBox, "Xbox");
+
+            caps.Categories.AddCategoryMapping(17, NewznabStandardCategory.AudioMP3, "Music/Audio");
+            caps.Categories.AddCategoryMapping(27, NewznabStandardCategory.Audio, "Music/Flac");
+            caps.Categories.AddCategoryMapping(23, NewznabStandardCategory.AudioForeign, "Music/Non-English");
+            caps.Categories.AddCategoryMapping(41, NewznabStandardCategory.Audio, "Music/Packs");
+            caps.Categories.AddCategoryMapping(16, NewznabStandardCategory.AudioVideo, "Music/Video");
+
+            caps.Categories.AddCategoryMapping(29, NewznabStandardCategory.TVAnime, "Anime");
+            caps.Categories.AddCategoryMapping(42, NewznabStandardCategory.AudioAudiobook, "Audio Books");
+            caps.Categories.AddCategoryMapping(20, NewznabStandardCategory.Books, "Books");
+            caps.Categories.AddCategoryMapping(102, NewznabStandardCategory.BooksForeign, "Books/Non-English");
+            caps.Categories.AddCategoryMapping(30, NewznabStandardCategory.TVDocumentary, "Documentary");
+            caps.Categories.AddCategoryMapping(95, NewznabStandardCategory.TVDocumentary, "Educational");
+            caps.Categories.AddCategoryMapping(47, NewznabStandardCategory.Other, "Fonts");
+            caps.Categories.AddCategoryMapping(43, NewznabStandardCategory.PCMac, "Mac");
+            caps.Categories.AddCategoryMapping(45, NewznabStandardCategory.AudioOther, "Podcast");
+            caps.Categories.AddCategoryMapping(28, NewznabStandardCategory.PC, "Softwa/Packs");
+            caps.Categories.AddCategoryMapping(12, NewznabStandardCategory.PC, "Software");
+
+            caps.Categories.AddCategoryMapping(19, NewznabStandardCategory.XXX, "XXX/0Day");
             caps.Categories.AddCategoryMapping(6, NewznabStandardCategory.XXX, "XXX/Movies");
             caps.Categories.AddCategoryMapping(15, NewznabStandardCategory.XXXPack, "XXX/Packs");
 
@@ -220,15 +229,29 @@ namespace NzbDrone.Core.Indexers.Definitions
     {
         private readonly TorrentDaySettings _settings;
         private readonly IndexerCapabilitiesCategories _categories;
+        private readonly Logger _logger;
 
-        public TorrentDayParser(TorrentDaySettings settings, IndexerCapabilitiesCategories categories)
+        public TorrentDayParser(TorrentDaySettings settings, IndexerCapabilitiesCategories categories, Logger logger)
         {
             _settings = settings;
             _categories = categories;
+            _logger = logger;
         }
 
         public IList<ReleaseInfo> ParseResponse(IndexerResponse indexerResponse)
         {
+            if (indexerResponse.HttpResponse.HasHttpRedirect)
+            {
+                _logger.Warn("Redirected to {0} from indexer request", indexerResponse.HttpResponse.RedirectUrl);
+
+                if (indexerResponse.HttpResponse.RedirectUrl.ContainsIgnoreCase("/login.php"))
+                {
+                    throw new IndexerException(indexerResponse, "We are being redirected to the login page. Most likely your session expired or was killed. Recheck your cookie and try testing the indexer.");
+                }
+
+                throw new IndexerException(indexerResponse, "Redirected to {0} from indexer request", indexerResponse.HttpResponse.RedirectUrl);
+            }
+
             var torrentInfos = new List<TorrentInfo>();
 
             var rows = JsonConvert.DeserializeObject<dynamic>(indexerResponse.Content);
@@ -244,7 +267,7 @@ namespace NzbDrone.Core.Indexers.Definitions
                 var downloadMultiplier = (double?)row["download-multiplier"] ?? 1;
                 var link = new Uri(_settings.BaseUrl + "download.php/" + torrentId + "/" + torrentId + ".torrent");
                 var publishDate = DateTimeUtil.UnixTimestampToDateTime((long)row.ctime).ToLocalTime();
-                var imdb = ParseUtil.GetImdbID(imdbId) ?? 0;
+                var imdb = ParseUtil.GetImdbId(imdbId) ?? 0;
 
                 var release = new TorrentInfo
                 {
@@ -263,7 +286,7 @@ namespace NzbDrone.Core.Indexers.Definitions
                     DownloadVolumeFactor = downloadMultiplier,
                     UploadVolumeFactor = 1,
                     MinimumRatio = 1,
-                    MinimumSeedTime = 172800 // 48 hours
+                    MinimumSeedTime = 259200 // 72 hours
                 };
 
                 torrentInfos.Add(release);

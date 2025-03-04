@@ -1,10 +1,8 @@
 using System;
 using System.Threading.Tasks;
 using NLog;
-using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Http;
 using NzbDrone.Common.Instrumentation.Extensions;
-using NzbDrone.Common.TPL;
 using NzbDrone.Core.Download.Clients;
 using NzbDrone.Core.Exceptions;
 using NzbDrone.Core.Indexers;
@@ -16,7 +14,7 @@ namespace NzbDrone.Core.Download
 {
     public interface IDownloadService
     {
-        Task SendReportToClient(ReleaseInfo release, string source, string host, bool redirect);
+        Task SendReportToClient(ReleaseInfo release, string source, string host, bool redirect, int? downloadClientId);
         Task<byte[]> DownloadReport(string link, int indexerId, string source, string host, string title);
         void RecordRedirect(string link, int indexerId, string source, string host, string title);
     }
@@ -27,7 +25,6 @@ namespace NzbDrone.Core.Download
         private readonly IDownloadClientStatusService _downloadClientStatusService;
         private readonly IIndexerFactory _indexerFactory;
         private readonly IIndexerStatusService _indexerStatusService;
-        private readonly IRateLimitService _rateLimitService;
         private readonly IEventAggregator _eventAggregator;
         private readonly Logger _logger;
 
@@ -35,7 +32,6 @@ namespace NzbDrone.Core.Download
                                IDownloadClientStatusService downloadClientStatusService,
                                IIndexerFactory indexerFactory,
                                IIndexerStatusService indexerStatusService,
-                               IRateLimitService rateLimitService,
                                IEventAggregator eventAggregator,
                                Logger logger)
         {
@@ -43,23 +39,28 @@ namespace NzbDrone.Core.Download
             _downloadClientStatusService = downloadClientStatusService;
             _indexerFactory = indexerFactory;
             _indexerStatusService = indexerStatusService;
-            _rateLimitService = rateLimitService;
             _eventAggregator = eventAggregator;
             _logger = logger;
         }
 
-        public async Task SendReportToClient(ReleaseInfo release, string source, string host, bool redirect)
+        public async Task SendReportToClient(ReleaseInfo release, string source, string host, bool redirect, int? downloadClientId)
+        {
+            var downloadClient = downloadClientId.HasValue
+                ? _downloadClientProvider.Get(downloadClientId.Value)
+                : _downloadClientProvider.GetDownloadClient(release.DownloadProtocol, release.IndexerId);
+
+            await SendReportToClient(release, source, host, redirect, downloadClient);
+        }
+
+        private async Task SendReportToClient(ReleaseInfo release, string source, string host, bool redirect, IDownloadClient downloadClient)
         {
             var downloadTitle = release.Title;
-            var downloadClient = _downloadClientProvider.GetDownloadClient(release.DownloadProtocol);
 
             if (downloadClient == null)
             {
                 throw new DownloadClientUnavailableException($"{release.DownloadProtocol} Download client isn't configured yet");
             }
 
-            // Get the seed configuration for this release.
-            // remoteMovie.SeedConfiguration = _seedConfigProvider.GetSeedConfiguration(remoteMovie);
             var indexer = _indexerFactory.GetInstance(_indexerFactory.Get(release.IndexerId));
 
             var grabEvent = new IndexerDownloadEvent(release, true, source, host, release.Title, release.DownloadUrl)
@@ -68,6 +69,7 @@ namespace NzbDrone.Core.Download
                 DownloadClientId = downloadClient.Definition.Id,
                 DownloadClientName = downloadClient.Definition.Name,
                 Redirect = redirect,
+                Indexer = indexer,
                 GrabTrigger = source == "Prowlarr" ? GrabTrigger.Manual : GrabTrigger.Api
             };
 
@@ -125,15 +127,7 @@ namespace NzbDrone.Core.Download
             _logger.Trace("Attempting download of {0}", link);
             var url = new Uri(link);
 
-            // Limit grabs to 2 per second.
-            if (link.IsNotNullOrWhiteSpace() && !link.StartsWith("magnet:"))
-            {
-                await _rateLimitService.WaitAndPulseAsync(url.Host, TimeSpan.FromSeconds(2));
-            }
-
             var indexer = _indexerFactory.GetInstance(_indexerFactory.Get(indexerId));
-            var success = false;
-            var downloadedBytes = Array.Empty<byte>();
 
             var release = new ReleaseInfo
             {
@@ -144,16 +138,21 @@ namespace NzbDrone.Core.Download
                 DownloadProtocol = indexer.Protocol
             };
 
-            var grabEvent = new IndexerDownloadEvent(release, success, source, host, release.Title, release.DownloadUrl)
+            var grabEvent = new IndexerDownloadEvent(release, false, source, host, release.Title, release.DownloadUrl)
             {
+                Indexer = indexer,
                 GrabTrigger = source == "Prowlarr" ? GrabTrigger.Manual : GrabTrigger.Api
             };
 
+            byte[] downloadedBytes;
+
             try
             {
-                downloadedBytes = await indexer.Download(url);
+                var downloadResponse = await indexer.Download(url);
+                downloadedBytes = downloadResponse.Data;
                 _indexerStatusService.RecordSuccess(indexerId);
                 grabEvent.Successful = true;
+                grabEvent.ElapsedTime = downloadResponse.ElapsedTime;
             }
             catch (ReleaseUnavailableException)
             {
@@ -198,6 +197,7 @@ namespace NzbDrone.Core.Download
             var grabEvent = new IndexerDownloadEvent(release, true, source, host, release.Title, release.DownloadUrl)
             {
                 Redirect = true,
+                Indexer = indexer,
                 GrabTrigger = source == "Prowlarr" ? GrabTrigger.Manual : GrabTrigger.Api
             };
 

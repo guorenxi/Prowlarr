@@ -26,7 +26,6 @@ namespace NzbDrone.Core.Indexers.Definitions
         public override string Description => "Always on time";
         public override string Language => "en-US";
         public override Encoding Encoding => Encoding.UTF8;
-        public override DownloadProtocol Protocol => DownloadProtocol.Torrent;
         public override IndexerPrivacy Privacy => IndexerPrivacy.Private;
         public override IndexerCapabilities Capabilities => SetCapabilities();
 
@@ -37,7 +36,7 @@ namespace NzbDrone.Core.Indexers.Definitions
 
         public override IIndexerRequestGenerator GetRequestGenerator()
         {
-            return new SceneTimeRequestGenerator { Settings = Settings, Capabilities = Capabilities };
+            return new SceneTimeRequestGenerator(Settings, Capabilities);
         }
 
         public override IParseIndexerResponse GetParser()
@@ -66,11 +65,11 @@ namespace NzbDrone.Core.Indexers.Definitions
             {
                 TvSearchParams = new List<TvSearchParam>
                 {
-                    TvSearchParam.Q, TvSearchParam.Season, TvSearchParam.Ep
+                    TvSearchParam.Q, TvSearchParam.Season, TvSearchParam.Ep, TvSearchParam.ImdbId
                 },
                 MovieSearchParams = new List<MovieSearchParam>
                 {
-                    MovieSearchParam.Q
+                    MovieSearchParam.Q, MovieSearchParam.ImdbId
                 },
                 MusicSearchParams = new List<MusicSearchParam>
                 {
@@ -87,25 +86,26 @@ namespace NzbDrone.Core.Indexers.Definitions
             caps.Categories.AddCategoryMapping(57, NewznabStandardCategory.MoviesSD, "Movies SD");
             caps.Categories.AddCategoryMapping(59, NewznabStandardCategory.MoviesHD, "Movies HD");
             caps.Categories.AddCategoryMapping(64, NewznabStandardCategory.Movies3D, "Movies 3D");
-            caps.Categories.AddCategoryMapping(82, NewznabStandardCategory.MoviesOther, "Movies CAM-TS");
+            caps.Categories.AddCategoryMapping(82, NewznabStandardCategory.MoviesOther, "Movies CAM/TS");
             caps.Categories.AddCategoryMapping(16, NewznabStandardCategory.MoviesUHD, "Movies UHD");
             caps.Categories.AddCategoryMapping(2, NewznabStandardCategory.TVUHD, "TV UHD");
             caps.Categories.AddCategoryMapping(43, NewznabStandardCategory.TV, "TV Packs");
             caps.Categories.AddCategoryMapping(9, NewznabStandardCategory.TVHD, "TV HD");
             caps.Categories.AddCategoryMapping(77, NewznabStandardCategory.TVSD, "TV SD");
-            caps.Categories.AddCategoryMapping(6, NewznabStandardCategory.PCGames, "Games PC ISO");
+            caps.Categories.AddCategoryMapping(1, NewznabStandardCategory.TVAnime, "TV ANIME");
+            caps.Categories.AddCategoryMapping(6, NewznabStandardCategory.PCGames, "Games PC-ISO");
             caps.Categories.AddCategoryMapping(48, NewznabStandardCategory.ConsoleXBox, "Games XBOX");
             caps.Categories.AddCategoryMapping(51, NewznabStandardCategory.ConsoleWii, "Games Wii");
-            caps.Categories.AddCategoryMapping(55, NewznabStandardCategory.ConsoleNDS, "Games Nintendo DS");
-            caps.Categories.AddCategoryMapping(12, NewznabStandardCategory.ConsolePS4, "Games/PS");
+            caps.Categories.AddCategoryMapping(55, NewznabStandardCategory.ConsoleNDS, "Games Nintendo");
+            caps.Categories.AddCategoryMapping(12, NewznabStandardCategory.ConsolePS4, "Games PS");
             caps.Categories.AddCategoryMapping(15, NewznabStandardCategory.ConsoleOther, "Games Dreamcast");
             caps.Categories.AddCategoryMapping(52, NewznabStandardCategory.PCMac, "Mac/Linux");
             caps.Categories.AddCategoryMapping(53, NewznabStandardCategory.PC0day, "Apps");
             caps.Categories.AddCategoryMapping(24, NewznabStandardCategory.PCMobileOther, "Mobile Apps");
             caps.Categories.AddCategoryMapping(7, NewznabStandardCategory.Books, "Books and Magazines");
-            caps.Categories.AddCategoryMapping(65, NewznabStandardCategory.BooksComics, "Books Comic");
+            caps.Categories.AddCategoryMapping(65, NewznabStandardCategory.BooksComics, "Books Comics");
             caps.Categories.AddCategoryMapping(4, NewznabStandardCategory.Audio, "Music");
-            caps.Categories.AddCategoryMapping(116, NewznabStandardCategory.Audio, "Music Pack");
+            caps.Categories.AddCategoryMapping(116, NewznabStandardCategory.Audio, "Music Packs");
 
             caps.Flags = new List<IndexerFlag>
             {
@@ -118,54 +118,20 @@ namespace NzbDrone.Core.Indexers.Definitions
 
     public class SceneTimeRequestGenerator : IIndexerRequestGenerator
     {
-        public SceneTimeSettings Settings { get; set; }
-        public IndexerCapabilities Capabilities { get; set; }
+        private readonly SceneTimeSettings _settings;
+        private readonly IndexerCapabilities _capabilities;
 
-        private IEnumerable<IndexerRequest> GetPagedRequests(string term, int[] categories)
+        public SceneTimeRequestGenerator(SceneTimeSettings settings, IndexerCapabilities capabilities)
         {
-            var qc = new NameValueCollection
-            {
-                { "cata", "yes" },
-                { "sec", "jax" }
-            };
-
-            var catList = Capabilities.Categories.MapTorznabCapsToTrackers(categories);
-            foreach (var cat in catList)
-            {
-                qc.Set($"c{cat}", "1");
-            }
-
-            if (term.IsNotNullOrWhiteSpace())
-            {
-                qc.Set("search", term);
-            }
-
-            if (Settings.FreeLeechOnly)
-            {
-                qc.Set("freeleech", "on");
-            }
-
-            var searchUrl = $"{Settings.BaseUrl.TrimEnd('/')}/browse.php?{qc.GetQueryString()}";
-
-            var request = new IndexerRequest(searchUrl, HttpAccept.Html);
-
-            yield return request;
+            _settings = settings;
+            _capabilities = capabilities;
         }
 
         public IndexerPageableRequestChain GetSearchRequests(MovieSearchCriteria searchCriteria)
         {
             var pageableRequests = new IndexerPageableRequestChain();
 
-            pageableRequests.Add(GetPagedRequests(string.Format("{0}", searchCriteria.SanitizedSearchTerm), searchCriteria.Categories));
-
-            return pageableRequests;
-        }
-
-        public IndexerPageableRequestChain GetSearchRequests(MusicSearchCriteria searchCriteria)
-        {
-            var pageableRequests = new IndexerPageableRequestChain();
-
-            pageableRequests.Add(GetPagedRequests(string.Format("{0}", searchCriteria.SanitizedSearchTerm), searchCriteria.Categories));
+            pageableRequests.Add(GetPagedRequests($"{searchCriteria.SanitizedSearchTerm}", searchCriteria.Categories, searchCriteria.FullImdbId));
 
             return pageableRequests;
         }
@@ -174,7 +140,16 @@ namespace NzbDrone.Core.Indexers.Definitions
         {
             var pageableRequests = new IndexerPageableRequestChain();
 
-            pageableRequests.Add(GetPagedRequests(string.Format("{0}", searchCriteria.SanitizedTvSearchString), searchCriteria.Categories));
+            pageableRequests.Add(GetPagedRequests($"{searchCriteria.SanitizedTvSearchString}", searchCriteria.Categories, searchCriteria.FullImdbId));
+
+            return pageableRequests;
+        }
+
+        public IndexerPageableRequestChain GetSearchRequests(MusicSearchCriteria searchCriteria)
+        {
+            var pageableRequests = new IndexerPageableRequestChain();
+
+            pageableRequests.Add(GetPagedRequests($"{searchCriteria.SanitizedSearchTerm}", searchCriteria.Categories));
 
             return pageableRequests;
         }
@@ -183,7 +158,7 @@ namespace NzbDrone.Core.Indexers.Definitions
         {
             var pageableRequests = new IndexerPageableRequestChain();
 
-            pageableRequests.Add(GetPagedRequests(string.Format("{0}", searchCriteria.SanitizedSearchTerm), searchCriteria.Categories));
+            pageableRequests.Add(GetPagedRequests($"{searchCriteria.SanitizedSearchTerm}", searchCriteria.Categories));
 
             return pageableRequests;
         }
@@ -192,9 +167,42 @@ namespace NzbDrone.Core.Indexers.Definitions
         {
             var pageableRequests = new IndexerPageableRequestChain();
 
-            pageableRequests.Add(GetPagedRequests(string.Format("{0}", searchCriteria.SanitizedSearchTerm), searchCriteria.Categories));
+            pageableRequests.Add(GetPagedRequests($"{searchCriteria.SanitizedSearchTerm}", searchCriteria.Categories));
 
             return pageableRequests;
+        }
+
+        private IEnumerable<IndexerRequest> GetPagedRequests(string term, int[] categories, string imdbId = null)
+        {
+            var parameters = new NameValueCollection
+            {
+                { "cata", "yes" }
+            };
+
+            var catList = _capabilities.Categories.MapTorznabCapsToTrackers(categories);
+            foreach (var cat in catList)
+            {
+                parameters.Set($"c{cat}", "1");
+            }
+
+            if (imdbId.IsNotNullOrWhiteSpace())
+            {
+                parameters.Set("imdb", imdbId);
+            }
+
+            if (term.IsNotNullOrWhiteSpace())
+            {
+                parameters.Set("search", term);
+            }
+
+            if (_settings.FreeLeechOnly)
+            {
+                parameters.Set("freeleech", "on");
+            }
+
+            var searchUrl = $"{_settings.BaseUrl.TrimEnd('/')}/browse.php?{parameters.GetQueryString()}";
+
+            yield return new IndexerRequest(searchUrl, HttpAccept.Html);
         }
 
         public Func<IDictionary<string, string>> GetCookies { get; set; }
@@ -217,7 +225,7 @@ namespace NzbDrone.Core.Indexers.Definitions
             var releaseInfos = new List<ReleaseInfo>();
 
             var parser = new HtmlParser();
-            var dom = parser.ParseDocument(indexerResponse.Content);
+            using var dom = parser.ParseDocument(indexerResponse.Content);
 
             var table = dom.QuerySelector("table.movehere");
             if (table == null)
@@ -225,8 +233,7 @@ namespace NzbDrone.Core.Indexers.Definitions
                 return releaseInfos; // no results
             }
 
-            var headerColumns = table.QuerySelectorAll("tbody > tr > td.cat_Head")
-                .Select(x => x.TextContent).ToList();
+            var headerColumns = table.QuerySelectorAll("tbody > tr > td.cat_Head").Select(x => x.TextContent).ToList();
             var categoryIndex = headerColumns.FindIndex(x => x.Equals("Type"));
             var nameIndex = headerColumns.FindIndex(x => x.Equals("Name"));
             var sizeIndex = headerColumns.FindIndex(x => x.Equals("Size"));
@@ -287,7 +294,7 @@ namespace NzbDrone.Core.Indexers.Definitions
 
     public class SceneTimeSettings : CookieTorrentBaseSettings
     {
-        [FieldDefinition(3, Label = "FreeLeech Only", Type = FieldType.Checkbox,  HelpText = "Search Freeleech torrents only")]
+        [FieldDefinition(3, Label = "FreeLeech Only", Type = FieldType.Checkbox,  HelpText = "Search FreeLeech torrents only")]
         public bool FreeLeechOnly { get; set; }
     }
 }

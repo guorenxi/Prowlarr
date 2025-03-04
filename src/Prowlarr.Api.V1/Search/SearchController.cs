@@ -8,8 +8,8 @@ using Microsoft.AspNetCore.Mvc;
 using NLog;
 using NzbDrone.Common.Cache;
 using NzbDrone.Common.Extensions;
-using NzbDrone.Common.Http;
 using NzbDrone.Core.Download;
+using NzbDrone.Core.Download.Clients;
 using NzbDrone.Core.Exceptions;
 using NzbDrone.Core.Indexers;
 using NzbDrone.Core.IndexerSearch;
@@ -24,7 +24,7 @@ namespace Prowlarr.Api.V1.Search
     [V1ApiController]
     public class SearchController : RestController<ReleaseResource>
     {
-        private readonly ISearchForNzb _nzbSearhService;
+        private readonly IReleaseSearchService _releaseSearchService;
         private readonly IDownloadService _downloadService;
         private readonly IIndexerFactory _indexerFactory;
         private readonly IDownloadMappingService _downloadMappingService;
@@ -32,9 +32,9 @@ namespace Prowlarr.Api.V1.Search
 
         private readonly ICached<ReleaseInfo> _remoteReleaseCache;
 
-        public SearchController(ISearchForNzb nzbSearhService, IDownloadService downloadService, IIndexerFactory indexerFactory, IDownloadMappingService downloadMappingService, ICacheManager cacheManager, Logger logger)
+        public SearchController(IReleaseSearchService releaseSearchService, IDownloadService downloadService, IIndexerFactory indexerFactory, IDownloadMappingService downloadMappingService, ICacheManager cacheManager, Logger logger)
         {
-            _nzbSearhService = nzbSearhService;
+            _releaseSearchService = releaseSearchService;
             _downloadService = downloadService;
             _indexerFactory = indexerFactory;
             _downloadMappingService = downloadMappingService;
@@ -46,17 +46,27 @@ namespace Prowlarr.Api.V1.Search
             _remoteReleaseCache = cacheManager.GetCache<ReleaseInfo>(GetType(), "remoteReleases");
         }
 
+        [NonAction]
         public override ReleaseResource GetResourceById(int id)
         {
             throw new NotImplementedException();
         }
 
         [HttpPost]
-        public ActionResult<ReleaseResource> GrabRelease(ReleaseResource release)
+        [Consumes("application/json")]
+        [Produces("application/json")]
+        public async Task<ActionResult<ReleaseResource>> GrabRelease([FromBody] ReleaseResource release)
         {
             ValidateResource(release);
 
             var releaseInfo = _remoteReleaseCache.Find(GetCacheKey(release));
+
+            if (releaseInfo == null)
+            {
+                _logger.Debug("Couldn't find requested release in cache, cache timeout probably expired.");
+
+                throw new NzbDroneClientException(HttpStatusCode.NotFound, "Couldn't find requested release in cache, try searching again");
+            }
 
             var indexerDef = _indexerFactory.Get(release.IndexerId);
             var source = Request.GetSource();
@@ -64,11 +74,12 @@ namespace Prowlarr.Api.V1.Search
 
             try
             {
-                _downloadService.SendReportToClient(releaseInfo, source, host, indexerDef.Redirect);
+                await _downloadService.SendReportToClient(releaseInfo, source, host, indexerDef.Redirect, release.DownloadClientId);
             }
             catch (ReleaseDownloadException ex)
             {
                 _logger.Error(ex, "Getting release from indexer failed");
+
                 throw new NzbDroneClientException(HttpStatusCode.Conflict, "Getting release from indexer failed");
             }
 
@@ -76,12 +87,18 @@ namespace Prowlarr.Api.V1.Search
         }
 
         [HttpPost("bulk")]
-        public ActionResult<ReleaseResource> GrabReleases(List<ReleaseResource> releases)
+        [Consumes("application/json")]
+        [Produces("application/json")]
+        public async Task<ActionResult<ReleaseResource>> GrabReleases([FromBody] List<ReleaseResource> releases)
         {
+            releases.ForEach(release => ValidateResource(release));
+
             var source = Request.GetSource();
             var host = Request.GetHostName();
 
-            var groupedReleases = releases.GroupBy(r => r.IndexerId);
+            var grabbedReleases = new List<ReleaseResource>();
+
+            var groupedReleases = releases.GroupBy(r => r.IndexerId).ToList();
 
             foreach (var indexerReleases in groupedReleases)
             {
@@ -89,25 +106,46 @@ namespace Prowlarr.Api.V1.Search
 
                 foreach (var release in indexerReleases)
                 {
-                    ValidateResource(release);
-
                     var releaseInfo = _remoteReleaseCache.Find(GetCacheKey(release));
+
+                    if (releaseInfo == null)
+                    {
+                        _logger.Error("Couldn't find requested release in cache, cache timeout probably expired.");
+
+                        continue;
+                    }
 
                     try
                     {
-                        _downloadService.SendReportToClient(releaseInfo, source, host, indexerDef.Redirect);
+                        await _downloadService.SendReportToClient(releaseInfo, source, host, indexerDef.Redirect, null);
                     }
                     catch (ReleaseDownloadException ex)
                     {
                         _logger.Error(ex, "Getting release from indexer failed");
+
+                        continue;
                     }
+                    catch (DownloadClientException ex)
+                    {
+                        _logger.Error(ex, "Failed to send grabbed release to download client");
+
+                        continue;
+                    }
+
+                    grabbedReleases.Add(release);
                 }
             }
 
-            return Ok(releases);
+            if (!grabbedReleases.Any())
+            {
+                throw new NzbDroneClientException(HttpStatusCode.BadRequest, "Failed to grab any release");
+            }
+
+            return Ok(grabbedReleases);
         }
 
         [HttpGet]
+        [Produces("application/json")]
         public Task<List<ReleaseResource>> GetAll([FromQuery] SearchResource payload)
         {
             return GetSearchReleases(payload);
@@ -131,10 +169,10 @@ namespace Prowlarr.Api.V1.Search
 
                 request.QueryToParams();
 
-                var result = await _nzbSearhService.Search(request, payload.IndexerIds, true);
-                var decisions = result.Releases;
+                var result = await _releaseSearchService.Search(request, payload.IndexerIds, true);
+                var releases = result.Releases;
 
-                return MapDecisions(decisions, Request.GetServerUrl());
+                return MapReleases(releases, Request.GetServerUrl());
             }
             catch (SearchFailedException ex)
             {
@@ -148,15 +186,15 @@ namespace Prowlarr.Api.V1.Search
             return new List<ReleaseResource>();
         }
 
-        protected virtual List<ReleaseResource> MapDecisions(IEnumerable<ReleaseInfo> releases, string serverUrl)
+        protected virtual List<ReleaseResource> MapReleases(IEnumerable<ReleaseInfo> releases, string serverUrl)
         {
             var result = new List<ReleaseResource>();
 
-            foreach (var downloadDecision in releases)
+            foreach (var releaseInfo in releases)
             {
-                var release = downloadDecision.ToResource();
+                var release = releaseInfo.ToResource();
 
-                _remoteReleaseCache.Set(GetCacheKey(release), downloadDecision, TimeSpan.FromMinutes(30));
+                _remoteReleaseCache.Set(GetCacheKey(release), releaseInfo, TimeSpan.FromMinutes(30));
                 release.DownloadUrl = release.DownloadUrl.IsNotNullOrWhiteSpace() ? _downloadMappingService.ConvertToProxyLink(new Uri(release.DownloadUrl), serverUrl, release.IndexerId, release.Title).AbsoluteUri : null;
                 release.MagnetUrl = release.MagnetUrl.IsNotNullOrWhiteSpace() ? _downloadMappingService.ConvertToProxyLink(new Uri(release.MagnetUrl), serverUrl, release.IndexerId, release.Title).AbsoluteUri : null;
 

@@ -10,7 +10,7 @@ namespace NzbDrone.Core.Indexers.Definitions
     {
         public override string Name => "PrivateHD";
         public override string[] IndexerUrls => new[] { "https://privatehd.to/" };
-        public override string Description => "PrivateHD is a Private Torrent Tracker for HD MOVIES / TV and the sister-site of AvistaZ, CinemaZ, ExoticaZ, and AnimeTorrents";
+        public override string Description => "PrivateHD (PHD) is a Private Torrent Tracker for HD MOVIES / TV and the sister-site of AvistaZ, CinemaZ, ExoticaZ, and AnimeTorrents";
         public override IndexerPrivacy Privacy => IndexerPrivacy.Private;
 
         public PrivateHD(IIndexerRepository indexerRepository,
@@ -23,21 +23,12 @@ namespace NzbDrone.Core.Indexers.Definitions
         {
         }
 
-        public override IIndexerRequestGenerator GetRequestGenerator()
-        {
-            return new AvistazRequestGenerator
-            {
-                Settings = Settings,
-                HttpClient = _httpClient,
-                Logger = _logger,
-                Capabilities = Capabilities
-            };
-        }
-
         protected override IndexerCapabilities SetCapabilities()
         {
             var caps = new IndexerCapabilities
             {
+                LimitsDefault = PageSize,
+                LimitsMax = PageSize,
                 TvSearchParams = new List<TvSearchParam>
                 {
                     TvSearchParam.Q, TvSearchParam.Season, TvSearchParam.Ep, TvSearchParam.ImdbId, TvSearchParam.TvdbId, TvSearchParam.Genre

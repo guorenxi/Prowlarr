@@ -1,11 +1,12 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Net.Http;
 using FluentValidation.Results;
-using Newtonsoft.Json;
 using NLog;
 using NzbDrone.Common.Http;
+using NzbDrone.Common.Serializer;
 
 namespace NzbDrone.Core.Applications.LazyLibrarian
 {
@@ -96,6 +97,13 @@ namespace NzbDrone.Core.Applications.LazyLibrarian
                 { "dlpriority", CalculatePriority(indexer.Priority).ToString() }
             };
 
+            if (indexer.Type == LazyLibrarianProviderType.Torznab)
+            {
+                parameters.Add("seeders", indexer.MinimumSeeders.ToString());
+                parameters.Add("seed_ratio", indexer.SeedRatio.ToString(CultureInfo.InvariantCulture));
+                parameters.Add("seed_duration", indexer.SeedTime.ToString());
+            }
+
             var request = BuildRequest(settings, "/api", "addProvider", HttpMethod.Get, parameters);
             CheckForError(Execute<LazyLibrarianStatus>(request));
             return indexer;
@@ -114,6 +122,13 @@ namespace NzbDrone.Core.Applications.LazyLibrarian
                 { "altername", indexer.Altername },
                 { "dlpriority", CalculatePriority(indexer.Priority).ToString() }
             };
+
+            if (indexer.Type == LazyLibrarianProviderType.Torznab)
+            {
+                parameters.Add("seeders", indexer.MinimumSeeders.ToString());
+                parameters.Add("seed_ratio", indexer.SeedRatio.ToString(CultureInfo.InvariantCulture));
+                parameters.Add("seed_duration", indexer.SeedTime.ToString());
+            }
 
             var request = BuildRequest(settings, "/api", "changeProvider", HttpMethod.Get, parameters);
             CheckForError(Execute<LazyLibrarianStatus>(request));
@@ -139,11 +154,11 @@ namespace NzbDrone.Core.Applications.LazyLibrarian
                     return new ValidationFailure("ApiKey", status.Error.Message);
                 }
 
-                var indexers = GetIndexers(settings);
+                GetIndexers(settings);
             }
             catch (HttpException ex)
             {
-                _logger.Error(ex, "Unable to send test message");
+                _logger.Error(ex, "Unable to complete application test");
                 return new ValidationFailure("BaseUrl", "Unable to complete application test");
             }
             catch (LazyLibrarianException ex)
@@ -153,8 +168,8 @@ namespace NzbDrone.Core.Applications.LazyLibrarian
             }
             catch (Exception ex)
             {
-                _logger.Error(ex, "Unable to send test message");
-                return new ValidationFailure("", "Unable to send test message");
+                _logger.Error(ex, "Unable to complete application test");
+                return new ValidationFailure("", $"Unable to send test message. {ex.Message}");
             }
 
             return null;
@@ -164,7 +179,9 @@ namespace NzbDrone.Core.Applications.LazyLibrarian
         {
             var baseUrl = settings.BaseUrl.TrimEnd('/');
 
-            var requestBuilder = new HttpRequestBuilder(baseUrl).Resource(resource)
+            var requestBuilder = new HttpRequestBuilder(baseUrl)
+                .Resource(resource)
+                .Accept(HttpAccept.Json)
                 .AddQueryParam("cmd", command)
                 .AddQueryParam("apikey", settings.ApiKey);
 
@@ -191,9 +208,12 @@ namespace NzbDrone.Core.Applications.LazyLibrarian
         {
             var response = _httpClient.Execute(request);
 
-            var results = JsonConvert.DeserializeObject<TResource>(response.Content);
+            if ((int)response.StatusCode >= 300)
+            {
+                throw new HttpException(response);
+            }
 
-            return results;
+            return Json.Deserialize<TResource>(response.Content);
         }
 
         private int CalculatePriority(int indexerPriority) => ProwlarrHighestPriority - indexerPriority + 1;

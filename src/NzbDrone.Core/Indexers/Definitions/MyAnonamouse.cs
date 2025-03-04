@@ -7,6 +7,7 @@ using System.Net;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using FluentValidation;
+using FluentValidation.Results;
 using Newtonsoft.Json;
 using NLog;
 using NzbDrone.Common.Cache;
@@ -15,12 +16,14 @@ using NzbDrone.Common.Http;
 using NzbDrone.Common.Serializer;
 using NzbDrone.Core.Annotations;
 using NzbDrone.Core.Configuration;
+using NzbDrone.Core.Exceptions;
 using NzbDrone.Core.Indexers.Exceptions;
 using NzbDrone.Core.Indexers.Settings;
 using NzbDrone.Core.IndexerSearch.Definitions;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.Parser;
 using NzbDrone.Core.Parser.Model;
+using NzbDrone.Core.ThingiProvider;
 using NzbDrone.Core.Validation;
 
 namespace NzbDrone.Core.Indexers.Definitions
@@ -30,12 +33,12 @@ namespace NzbDrone.Core.Indexers.Definitions
         public override string Name => "MyAnonamouse";
         public override string[] IndexerUrls => new[] { "https://www.myanonamouse.net/" };
         public override string Description => "MyAnonaMouse (MAM) is a large ebook and audiobook tracker.";
-        public override DownloadProtocol Protocol => DownloadProtocol.Torrent;
         public override IndexerPrivacy Privacy => IndexerPrivacy.Private;
+        public override bool SupportsPagination => true;
         public override int PageSize => 100;
         public override IndexerCapabilities Capabilities => SetCapabilities();
+
         private readonly ICacheManager _cacheManager;
-        private static readonly Regex TorrentIdRegex = new Regex(@"tor/download.php\?tid=(?<id>\d+)$");
 
         public MyAnonamouse(IIndexerHttpClient httpClient, IEventAggregator eventAggregator, IIndexerStatusService indexerStatusService, IConfigService configService, Logger logger, ICacheManager cacheManager)
             : base(httpClient, eventAggregator, indexerStatusService, configService, logger)
@@ -45,58 +48,103 @@ namespace NzbDrone.Core.Indexers.Definitions
 
         public override IIndexerRequestGenerator GetRequestGenerator()
         {
-            return new MyAnonamouseRequestGenerator { Settings = Settings, Capabilities = Capabilities };
+            return new MyAnonamouseRequestGenerator(Settings, Capabilities, _logger);
         }
 
         public override IParseIndexerResponse GetParser()
         {
-            return new MyAnonamouseParser(Settings, Capabilities.Categories, _httpClient, _cacheManager, _logger);
+            return new MyAnonamouseParser(Definition, Settings, Capabilities.Categories, _httpClient, _cacheManager, _logger);
         }
 
-        public override async Task<byte[]> Download(Uri link)
+        public override async Task<IndexerDownloadResponse> Download(Uri link)
         {
-            if (Settings.Freeleech)
-            {
-                _logger.Debug($"Attempting to use freeleech token for {link.AbsoluteUri}");
+            var downloadLink = link.RemoveQueryParam("canUseToken");
 
-                var idMatch = TorrentIdRegex.Match(link.AbsoluteUri);
-                if (idMatch.Success)
+            if (Settings.UseFreeleechWedge is (int)MyAnonamouseFreeleechWedgeAction.Preferred or (int)MyAnonamouseFreeleechWedgeAction.Required &&
+                bool.TryParse(link.GetQueryParam("canUseToken"), out var canUseToken) && canUseToken)
+            {
+                _logger.Debug("Attempting to use freeleech wedge for {0}", downloadLink.AbsoluteUri);
+
+                if (int.TryParse(link.GetQueryParam("tid"), out var torrentId) && torrentId > 0)
                 {
-                    var id = int.Parse(idMatch.Groups["id"].Value);
                     var timestamp = DateTimeOffset.Now.ToUnixTimeSeconds();
                     var freeleechUrl = Settings.BaseUrl + $"json/bonusBuy.php/{timestamp}";
 
-                    var freeleechRequest = new HttpRequestBuilder(freeleechUrl)
+                    var freeleechRequestBuilder = new HttpRequestBuilder(freeleechUrl)
+                        .Accept(HttpAccept.Json)
                         .AddQueryParam("spendtype", "personalFL")
-                        .AddQueryParam("torrentid", id)
-                        .AddQueryParam("timestamp", timestamp.ToString())
-                        .Build();
+                        .AddQueryParam("torrentid", torrentId)
+                        .AddQueryParam("timestamp", timestamp.ToString());
 
-                    var indexerReq = new IndexerRequest(freeleechRequest);
-                    var response = await FetchIndexerResponse(indexerReq).ConfigureAwait(false);
-                    var resource = Json.Deserialize<MyAnonamouseBuyPersonalFreeleechResponse>(response.Content);
+                    freeleechRequestBuilder.LogResponseContent = true;
+
+                    var cookies = GetCookies();
+
+                    if (cookies != null && cookies.Any())
+                    {
+                        freeleechRequestBuilder.SetCookies(cookies);
+                    }
+
+                    var freeleechRequest = freeleechRequestBuilder.Build();
+
+                    var freeleechResponse = await _httpClient.ExecuteProxiedAsync(freeleechRequest, Definition).ConfigureAwait(false);
+
+                    var resource = Json.Deserialize<MyAnonamouseBuyPersonalFreeleechResponse>(freeleechResponse.Content);
 
                     if (resource.Success)
                     {
-                        _logger.Debug($"Successfully to used freeleech token for torrentid ${id}");
+                        _logger.Debug("Successfully used freeleech wedge for torrentid {0}.", torrentId);
+                    }
+                    else if (resource.Error.IsNotNullOrWhiteSpace() && resource.Error.ContainsIgnoreCase("This Torrent is VIP"))
+                    {
+                        _logger.Debug("{0} is already VIP, continuing downloading: {1}", torrentId, resource.Error);
+                    }
+                    else if (resource.Error.IsNotNullOrWhiteSpace() && resource.Error.ContainsIgnoreCase("This is already a personal freeleech"))
+                    {
+                        _logger.Debug("{0} is already a personal freeleech, continuing downloading: {1}", torrentId, resource.Error);
                     }
                     else
                     {
-                        _logger.Debug($"Failed to use freeleech token: ${resource.Error}");
+                        _logger.Warn("Failed to purchase freeleech wedge for {0}: {1}", torrentId, resource.Error);
+
+                        if (Settings.UseFreeleechWedge == (int)MyAnonamouseFreeleechWedgeAction.Preferred)
+                        {
+                            _logger.Debug("'Use Freeleech Wedge' option set to preferred, continuing downloading: '{0}'", downloadLink.AbsoluteUri);
+                        }
+                        else
+                        {
+                            throw new ReleaseUnavailableException($"Failed to buy freeleech wedge and 'Use Freeleech Wedge' is set to required, aborting download: '{downloadLink.AbsoluteUri}'");
+                        }
                     }
                 }
                 else
                 {
-                    _logger.Debug($"Could not get torrent id from link ${link.AbsoluteUri}, skipping freeleech");
+                    _logger.Warn("Could not get torrent id from link {0}, skipping use of freeleech wedge.", downloadLink.AbsoluteUri);
                 }
             }
 
-            return await base.Download(link).ConfigureAwait(false);
+            return await base.Download(downloadLink).ConfigureAwait(false);
         }
 
         protected override IDictionary<string, string> GetCookies()
         {
-            return CookieUtil.CookieHeaderToDictionary("mam_id=" + Settings.MamId);
+            var cookies = base.GetCookies();
+
+            if (cookies is { Count: > 0 } && cookies.TryGetValue("mam_id", out var mamId) && mamId.IsNotNullOrWhiteSpace())
+            {
+                return cookies;
+            }
+
+            return CookieUtil.CookieHeaderToDictionary($"mam_id={Settings.MamId}");
+        }
+
+        protected override async Task Test(List<ValidationFailure> failures)
+        {
+            UpdateCookies(null, null);
+
+            _logger.Debug("Cookies cleared.");
+
+            await base.Test(failures).ConfigureAwait(false);
         }
 
         private IndexerCapabilities SetCapabilities()
@@ -210,14 +258,31 @@ namespace NzbDrone.Core.Indexers.Definitions
 
     public class MyAnonamouseRequestGenerator : IIndexerRequestGenerator
     {
-        public MyAnonamouseSettings Settings { get; set; }
-        public IndexerCapabilities Capabilities { get; set; }
+        private static readonly Regex SanitizeSearchQueryRegex = new ("[^\\w]+", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+        private readonly MyAnonamouseSettings _settings;
+        private readonly IndexerCapabilities _capabilities;
+        private readonly Logger _logger;
+
+        public MyAnonamouseRequestGenerator(MyAnonamouseSettings settings, IndexerCapabilities capabilities, Logger logger)
+        {
+            _settings = settings;
+            _capabilities = capabilities;
+            _logger = logger;
+        }
 
         private IEnumerable<IndexerRequest> GetPagedRequests(SearchCriteriaBase searchCriteria)
         {
-            var term = searchCriteria.SanitizedSearchTerm.Trim();
+            var term = SanitizeSearchQueryRegex.Replace(searchCriteria.SanitizedSearchTerm, " ").Trim();
 
-            var searchType = Settings.SearchType switch
+            if (searchCriteria.SearchTerm.IsNotNullOrWhiteSpace() && term.IsNullOrWhiteSpace())
+            {
+                _logger.Debug("Search term is empty after being sanitized, stopping search. Initial search term: '{0}'", searchCriteria.SearchTerm);
+
+                yield break;
+            }
+
+            var searchType = _settings.SearchType switch
             {
                 (int)MyAnonamouseSearchType.Active => "active",
                 (int)MyAnonamouseSearchType.Freeleech => "fl",
@@ -242,37 +307,59 @@ namespace NzbDrone.Core.Indexers.Definitions
                 { "description", "1" } // include the description
             };
 
-            if (Settings.SearchInDescription)
+            if (_settings.SearchInDescription)
             {
-                parameters.Add("tor[srchIn][description]", "true");
+                parameters.Set("tor[srchIn][description]", "true");
             }
 
-            if (Settings.SearchInSeries)
+            if (_settings.SearchInSeries)
             {
-                parameters.Add("tor[srchIn][series]", "true");
+                parameters.Set("tor[srchIn][series]", "true");
             }
 
-            if (Settings.SearchInFilenames)
+            if (_settings.SearchInFilenames)
             {
-                parameters.Add("tor[srchIn][filenames]", "true");
+                parameters.Set("tor[srchIn][filenames]", "true");
             }
 
-            var catList = Capabilities.Categories.MapTorznabCapsToTrackers(searchCriteria.Categories);
+            if (_settings.SearchLanguages.Any())
+            {
+                foreach (var (language, index) in _settings.SearchLanguages.Select((value, index) => (value, index)))
+                {
+                    parameters.Set($"tor[browse_lang][{index}]", language.ToString());
+                }
+            }
+
+            var catList = _capabilities.Categories.MapTorznabCapsToTrackers(searchCriteria.Categories).Distinct().ToList();
+
             if (catList.Any())
             {
-                var index = 0;
-                foreach (var cat in catList)
+                foreach (var (category, index) in catList.Select((value, index) => (value, index)))
                 {
-                    parameters.Add("tor[cat][" + index + "]", cat);
-                    index++;
+                    parameters.Set($"tor[cat][{index}]", category);
                 }
             }
             else
             {
-                parameters.Add("tor[cat][]", "0");
+                parameters.Set("tor[cat][]", "0");
             }
 
-            var searchUrl = Settings.BaseUrl + "tor/js/loadSearchJSONbasic.php";
+            if (searchCriteria.MinSize is > 0)
+            {
+                parameters.Set("tor[minSize]", searchCriteria.MinSize.Value.ToString());
+            }
+
+            if (searchCriteria.MaxSize is > 0)
+            {
+                parameters.Set("tor[maxSize]", searchCriteria.MaxSize.Value.ToString());
+            }
+
+            if (searchCriteria.MinSize is > 0 || searchCriteria.MaxSize is > 0)
+            {
+                parameters.Set("tor[unit]", "1");
+            }
+
+            var searchUrl = _settings.BaseUrl + "tor/js/loadSearchJSONbasic.php";
 
             if (parameters.Count > 0)
             {
@@ -323,66 +410,78 @@ namespace NzbDrone.Core.Indexers.Definitions
 
     public class MyAnonamouseParser : IParseIndexerResponse
     {
+        private readonly ProviderDefinition _definition;
         private readonly MyAnonamouseSettings _settings;
         private readonly IndexerCapabilitiesCategories _categories;
         private readonly IIndexerHttpClient _httpClient;
         private readonly Logger _logger;
+
         private readonly ICached<string> _userClassCache;
         private readonly HashSet<string> _vipFreeleechUserClasses = new (StringComparer.OrdinalIgnoreCase)
         {
             "VIP",
-            "Elite VIP",
+            "Elite VIP"
         };
 
-        public MyAnonamouseParser(MyAnonamouseSettings settings,
+        public MyAnonamouseParser(ProviderDefinition definition,
+            MyAnonamouseSettings settings,
             IndexerCapabilitiesCategories categories,
             IIndexerHttpClient httpClient,
             ICacheManager cacheManager,
             Logger logger)
         {
+            _definition = definition;
             _settings = settings;
             _categories = categories;
             _httpClient = httpClient;
             _logger = logger;
+
             _userClassCache = cacheManager.GetCache<string>(GetType());
         }
 
         public IList<ReleaseInfo> ParseResponse(IndexerResponse indexerResponse)
         {
+            var httpResponse = indexerResponse.HttpResponse;
+
             // Throw auth errors here before we try to parse
-            if (indexerResponse.HttpResponse.StatusCode == HttpStatusCode.Forbidden)
+            if (httpResponse.StatusCode == HttpStatusCode.Forbidden)
             {
                 throw new IndexerAuthException("[403 Forbidden] - mam_id expired or invalid");
             }
 
             // Throw common http errors here before we try to parse
-            if (indexerResponse.HttpResponse.StatusCode != HttpStatusCode.OK)
+            if (httpResponse.StatusCode != HttpStatusCode.OK)
             {
                 // Remove cookie cache
                 CookiesUpdater(null, null);
 
-                throw new IndexerException(indexerResponse, $"Unexpected response status {indexerResponse.HttpResponse.StatusCode} code from API request");
+                throw new IndexerException(indexerResponse, $"Unexpected response status {httpResponse.StatusCode} code from indexer request");
             }
 
-            if (!indexerResponse.HttpResponse.Headers.ContentType.Contains(HttpAccept.Json.Value))
+            if (!httpResponse.Headers.ContentType.Contains(HttpAccept.Json.Value))
             {
                 // Remove cookie cache
                 CookiesUpdater(null, null);
 
-                throw new IndexerException(indexerResponse, $"Unexpected response header {indexerResponse.HttpResponse.Headers.ContentType} from API request, expected {HttpAccept.Json.Value}");
+                throw new IndexerException(indexerResponse, $"Unexpected response header {httpResponse.Headers.ContentType} from indexer request, expected {HttpAccept.Json.Value}");
             }
 
-            var torrentInfos = new List<TorrentInfo>();
+            var releaseInfos = new List<ReleaseInfo>();
 
             var jsonResponse = JsonConvert.DeserializeObject<MyAnonamouseResponse>(indexerResponse.Content);
 
             var error = jsonResponse.Error;
-            if (error != null && error == "Nothing returned, out of 0")
+            if (error.IsNotNullOrWhiteSpace() && error.StartsWithIgnoreCase("Nothing returned, out of"))
             {
-                return torrentInfos.ToArray();
+                return releaseInfos.ToArray();
             }
 
-            var hasUserVip = HasUserVip();
+            if (jsonResponse.Data == null)
+            {
+                throw new IndexerException(indexerResponse, "Unexpected response content from indexer request: {0}", jsonResponse.Message ?? "Check the logs for more information.");
+            }
+
+            var hasUserVip = HasUserVip(httpResponse.GetCookies());
 
             foreach (var item in jsonResponse.Data)
             {
@@ -394,6 +493,8 @@ namespace NzbDrone.Core.Indexers.Definitions
                 release.Title = item.Title;
                 release.Description = item.Description;
 
+                release.BookTitle = item.Title;
+
                 if (item.AuthorInfo != null)
                 {
                     var authorInfo = JsonConvert.DeserializeObject<Dictionary<string, string>>(item.AuthorInfo);
@@ -402,6 +503,7 @@ namespace NzbDrone.Core.Indexers.Definitions
                     if (author.IsNotNullOrWhiteSpace())
                     {
                         release.Title += " by " + author;
+                        release.Author = author;
                     }
                 }
 
@@ -429,8 +531,10 @@ namespace NzbDrone.Core.Indexers.Definitions
                     release.Title += " [VIP]";
                 }
 
-                release.DownloadUrl = _settings.BaseUrl + "tor/download.php?tid=" + id;
-                release.InfoUrl = _settings.BaseUrl + "t/" + id;
+                var isFreeLeech = item.Free || item.PersonalFreeLeech || (hasUserVip && item.FreeVip);
+
+                release.DownloadUrl = GetDownloadUrl(id, !isFreeLeech);
+                release.InfoUrl = $"{_settings.BaseUrl}t/{id}";
                 release.Guid = release.InfoUrl;
                 release.Categories = _categories.MapTrackerCatToNewznab(item.Category);
                 release.PublishDate = DateTime.ParseExact(item.Added, "yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal).ToLocalTime();
@@ -439,18 +543,35 @@ namespace NzbDrone.Core.Indexers.Definitions
                 release.Seeders = item.Seeders;
                 release.Peers = item.Leechers + release.Seeders;
                 release.Size = ParseUtil.GetBytes(item.Size);
-                release.DownloadVolumeFactor = item.Free ? 0 : hasUserVip && item.FreeVip ? 0 : 1;
+                release.DownloadVolumeFactor = isFreeLeech ? 0 : 1;
                 release.UploadVolumeFactor = 1;
                 release.MinimumRatio = 1;
                 release.MinimumSeedTime = 259200; // 72 hours
 
-                torrentInfos.Add(release);
+                releaseInfos.Add(release);
             }
 
-            return torrentInfos.ToArray();
+            // Update cookies with the updated mam_id value received in the response
+            CookiesUpdater(httpResponse.GetCookies(), DateTime.Now.AddDays(30));
+
+            return releaseInfos.ToArray();
         }
 
-        private bool HasUserVip()
+        private string GetDownloadUrl(int torrentId, bool canUseToken)
+        {
+            var url = new HttpUri(_settings.BaseUrl)
+                .CombinePath("/tor/download.php")
+                .AddQueryParam("tid", torrentId);
+
+            if (_settings.UseFreeleechWedge is (int)MyAnonamouseFreeleechWedgeAction.Preferred or (int)MyAnonamouseFreeleechWedgeAction.Required && canUseToken)
+            {
+                url = url.AddQueryParam("canUseToken", "true");
+            }
+
+            return url.FullUri;
+        }
+
+        private bool HasUserVip(Dictionary<string, string> cookies)
         {
             var cacheKey = "myanonamouse_user_class_" + _settings.ToJson().SHA256Hash();
 
@@ -461,14 +582,16 @@ namespace NzbDrone.Core.Indexers.Definitions
                     var request = new HttpRequestBuilder(_settings.BaseUrl.Trim('/'))
                         .Resource("/jsonLoad.php")
                         .Accept(HttpAccept.Json)
+                        .SetCookies(cookies)
                         .Build();
 
-                    _logger.Debug("Fetching user data: " + request.Url.FullUri);
+                    _logger.Debug("Fetching user data: {0}", request.Url.FullUri);
 
-                    request.Cookies.Add("mam_id", _settings.MamId);
+                    var response = _httpClient.ExecuteProxied(request, _definition);
 
-                    var response = _httpClient.Get(request);
                     var jsonResponse = JsonConvert.DeserializeObject<MyAnonamouseUserDataResponse>(response.Content);
+
+                    _logger.Trace("Current user class: '{0}'", jsonResponse.UserClass);
 
                     return jsonResponse.UserClass?.Trim();
                 },
@@ -499,6 +622,8 @@ namespace NzbDrone.Core.Indexers.Definitions
             SearchInDescription = false;
             SearchInSeries = false;
             SearchInFilenames = false;
+            SearchLanguages = Array.Empty<int>();
+            UseFreeleechWedge = (int)MyAnonamouseFreeleechWedgeAction.Never;
         }
 
         [FieldDefinition(2, Type = FieldType.Textbox, Label = "Mam Id", HelpText = "Mam Session Id (Created Under Preferences -> Security)")]
@@ -507,17 +632,20 @@ namespace NzbDrone.Core.Indexers.Definitions
         [FieldDefinition(3, Type = FieldType.Select, Label = "Search Type", SelectOptions = typeof(MyAnonamouseSearchType), HelpText = "Specify the desired search type")]
         public int SearchType { get; set; }
 
-        [FieldDefinition(4, Type = FieldType.Checkbox, Label = "Buy Freeleech Token", HelpText = "Buy personal freeleech token for download")]
-        public bool Freeleech { get; set; }
-
-        [FieldDefinition(5, Type = FieldType.Checkbox, Label = "Search in description", HelpText = "Search text in the description")]
+        [FieldDefinition(4, Type = FieldType.Checkbox, Label = "Search in description", HelpText = "Search text in the description")]
         public bool SearchInDescription { get; set; }
 
-        [FieldDefinition(6, Type = FieldType.Checkbox, Label = "Search in series", HelpText = "Search text in the series")]
+        [FieldDefinition(5, Type = FieldType.Checkbox, Label = "Search in series", HelpText = "Search text in the series")]
         public bool SearchInSeries { get; set; }
 
-        [FieldDefinition(7, Type = FieldType.Checkbox, Label = "Search in filenames", HelpText = "Search text in the filenames")]
+        [FieldDefinition(6, Type = FieldType.Checkbox, Label = "Search in filenames", HelpText = "Search text in the filenames")]
         public bool SearchInFilenames { get; set; }
+
+        [FieldDefinition(7, Type = FieldType.Select, Label = "Search Languages", SelectOptions = typeof(MyAnonamouseSearchLanguages), HelpText = "Specify the desired languages. If unspecified, all options are used.")]
+        public IEnumerable<int> SearchLanguages { get; set; }
+
+        [FieldDefinition(8, Type = FieldType.Select, Label = "Use Freeleech Wedges", SelectOptions = typeof(MyAnonamouseFreeleechWedgeAction), HelpText = "Use freeleech wedges to make grabbed torrents personal freeleech")]
+        public int UseFreeleechWedge { get; set; }
 
         public override NzbDroneValidationResult Validate()
         {
@@ -529,16 +657,225 @@ namespace NzbDrone.Core.Indexers.Definitions
     {
         [FieldOption(Label="All torrents", Hint = "Search everything")]
         All = 0,
+
         [FieldOption(Label="Only active", Hint = "Last update had 1+ seeders")]
         Active = 1,
+
         [FieldOption(Label="Freeleech", Hint = "Freeleech torrents")]
         Freeleech = 2,
+
         [FieldOption(Label="Freeleech or VIP", Hint = "Freeleech or VIP torrents")]
         FreeleechOrVip = 3,
+
         [FieldOption(Label="VIP", Hint = "VIP torrents")]
         Vip = 4,
+
         [FieldOption(Label="Not VIP", Hint = "Torrents not VIP")]
         NotVip = 5,
+    }
+
+    public enum MyAnonamouseSearchLanguages
+    {
+        [FieldOption(Label="English")]
+        English = 1,
+
+        [FieldOption(Label="Afrikaans")]
+        Afrikaans = 17,
+
+        [FieldOption(Label="Arabic")]
+        Arabic = 32,
+
+        [FieldOption(Label="Bengali")]
+        Bengali = 35,
+
+        [FieldOption(Label="Bosnian")]
+        Bosnian = 51,
+
+        [FieldOption(Label="Bulgarian")]
+        Bulgarian = 18,
+
+        [FieldOption(Label="Burmese")]
+        Burmese = 6,
+
+        [FieldOption(Label="Cantonese")]
+        Cantonese = 44,
+
+        [FieldOption(Label="Catalan")]
+        Catalan = 19,
+
+        [FieldOption(Label="Chinese")]
+        Chinese = 2,
+
+        [FieldOption(Label="Croatian")]
+        Croatian = 49,
+
+        [FieldOption(Label="Czech")]
+        Czech = 20,
+
+        [FieldOption(Label="Danish")]
+        Danish = 21,
+
+        [FieldOption(Label="Dutch")]
+        Dutch = 22,
+
+        [FieldOption(Label="Estonian")]
+        Estonian = 61,
+
+        [FieldOption(Label="Farsi")]
+        Farsi = 39,
+
+        [FieldOption(Label="Finnish")]
+        Finnish = 23,
+
+        [FieldOption(Label="French")]
+        French = 36,
+
+        [FieldOption(Label="German")]
+        German = 37,
+
+        [FieldOption(Label="Greek")]
+        Greek = 26,
+
+        [FieldOption(Label="Greek, Ancient")]
+        GreekAncient = 59,
+
+        [FieldOption(Label="Gujarati")]
+        Gujarati = 3,
+
+        [FieldOption(Label="Hebrew")]
+        Hebrew = 27,
+
+        [FieldOption(Label="Hindi")]
+        Hindi = 8,
+
+        [FieldOption(Label="Hungarian")]
+        Hungarian = 28,
+
+        [FieldOption(Label="Icelandic")]
+        Icelandic = 63,
+
+        [FieldOption(Label="Indonesian")]
+        Indonesian = 53,
+
+        [FieldOption(Label="Irish")]
+        Irish = 56,
+
+        [FieldOption(Label="Italian")]
+        Italian = 43,
+
+        [FieldOption(Label="Japanese")]
+        Japanese = 38,
+
+        [FieldOption(Label="Javanese")]
+        Javanese = 12,
+
+        [FieldOption(Label="Kannada")]
+        Kannada = 5,
+
+        [FieldOption(Label="Korean")]
+        Korean = 41,
+
+        [FieldOption(Label="Lithuanian")]
+        Lithuanian = 50,
+
+        [FieldOption(Label="Latin")]
+        Latin = 46,
+
+        [FieldOption(Label="Latvian")]
+        Latvian = 62,
+
+        [FieldOption(Label="Malay")]
+        Malay = 33,
+
+        [FieldOption(Label="Malayalam")]
+        Malayalam = 58,
+
+        [FieldOption(Label="Manx")]
+        Manx = 57,
+
+        [FieldOption(Label="Marathi")]
+        Marathi = 9,
+
+        [FieldOption(Label="Norwegian")]
+        Norwegian = 48,
+
+        [FieldOption(Label="Polish")]
+        Polish = 45,
+
+        [FieldOption(Label="Portuguese")]
+        Portuguese = 34,
+
+        [FieldOption(Label="Brazilian Portuguese (BP)")]
+        BrazilianPortuguese = 52,
+
+        [FieldOption(Label="Punjabi")]
+        Punjabi = 14,
+
+        [FieldOption(Label="Romanian")]
+        Romanian = 30,
+
+        [FieldOption(Label="Russian")]
+        Russian = 16,
+
+        [FieldOption(Label="Scottish Gaelic")]
+        ScottishGaelic = 24,
+
+        [FieldOption(Label="Sanskrit")]
+        Sanskrit = 60,
+
+        [FieldOption(Label="Serbian")]
+        Serbian = 31,
+
+        [FieldOption(Label="Slovenian")]
+        Slovenian = 54,
+
+        [FieldOption(Label="Spanish")]
+        Spanish = 4,
+
+        [FieldOption(Label="Castilian Spanish")]
+        CastilianSpanish = 55,
+
+        [FieldOption(Label="Swedish")]
+        Swedish = 40,
+
+        [FieldOption(Label="Tagalog")]
+        Tagalog = 29,
+
+        [FieldOption(Label="Tamil")]
+        Tamil = 11,
+
+        [FieldOption(Label="Telugu")]
+        Telugu = 10,
+
+        [FieldOption(Label="Thai")]
+        Thai = 7,
+
+        [FieldOption(Label="Turkish")]
+        Turkish = 42,
+
+        [FieldOption(Label="Ukrainian")]
+        Ukrainian = 25,
+
+        [FieldOption(Label="Urdu")]
+        Urdu = 15,
+
+        [FieldOption(Label="Vietnamese")]
+        Vietnamese = 13,
+
+        [FieldOption(Label="Other")]
+        Other = 47,
+    }
+
+    public enum MyAnonamouseFreeleechWedgeAction
+    {
+        [FieldOption(Label = "Never", Hint = "Do not buy as freeleech")]
+        Never = 0,
+
+        [FieldOption(Label = "Preferred", Hint = "Buy and use wedge if possible")]
+        Preferred = 1,
+
+        [FieldOption(Label = "Required", Hint = "Abort download if unable to buy wedge")]
+        Required = 2,
     }
 
     public class MyAnonamouseTorrent
@@ -553,6 +890,8 @@ namespace NzbDrone.Core.Indexers.Definitions
         public string Filetype { get; set; }
         public bool Vip { get; set; }
         public bool Free { get; set; }
+        [JsonProperty(PropertyName = "personal_freeleech")]
+        public bool PersonalFreeLeech { get; set; }
         [JsonProperty(PropertyName = "fl_vip")]
         public bool FreeVip { get; set; }
         public string Category { get; set; }
@@ -568,7 +907,8 @@ namespace NzbDrone.Core.Indexers.Definitions
     public class MyAnonamouseResponse
     {
         public string Error { get; set; }
-        public List<MyAnonamouseTorrent> Data { get; set; }
+        public IReadOnlyCollection<MyAnonamouseTorrent> Data { get; set; }
+        public string Message { get; set; }
     }
 
     public class MyAnonamouseBuyPersonalFreeleechResponse
@@ -579,7 +919,7 @@ namespace NzbDrone.Core.Indexers.Definitions
 
     public class MyAnonamouseUserDataResponse
     {
-        [JsonProperty(PropertyName = "class")]
+        [JsonProperty(PropertyName = "classname")]
         public string UserClass { get; set; }
     }
 }

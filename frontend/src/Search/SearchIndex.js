@@ -1,6 +1,7 @@
 import _ from 'lodash';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
+import Alert from 'Components/Alert';
 import LoadingIndicator from 'Components/Loading/LoadingIndicator';
 import PageContent from 'Components/Page/PageContent';
 import PageContentBody from 'Components/Page/PageContentBody';
@@ -10,7 +11,9 @@ import PageToolbarButton from 'Components/Page/Toolbar/PageToolbarButton';
 import PageToolbarSection from 'Components/Page/Toolbar/PageToolbarSection';
 import PageToolbarSeparator from 'Components/Page/Toolbar/PageToolbarSeparator';
 import TableOptionsModalWrapper from 'Components/Table/TableOptions/TableOptionsModalWrapper';
-import { align, icons, sortDirections } from 'Helpers/Props';
+import { align, icons, kinds, sortDirections } from 'Helpers/Props';
+import AddIndexerModal from 'Indexer/Add/AddIndexerModal';
+import EditIndexerModalConnector from 'Indexer/Edit/EditIndexerModalConnector';
 import NoIndexer from 'Indexer/NoIndexer';
 import * as keyCodes from 'Utilities/Constants/keyCodes';
 import getErrorMessage from 'Utilities/Object/getErrorMessage';
@@ -27,13 +30,7 @@ import SearchFooterConnector from './SearchFooterConnector';
 import SearchIndexTableConnector from './Table/SearchIndexTableConnector';
 import styles from './SearchIndex.css';
 
-function getViewComponent(isSmallScreen) {
-  if (isSmallScreen) {
-    return SearchIndexOverviewsConnector;
-  }
-
-  return SearchIndexTableConnector;
-}
+const getViewComponent = (isSmallScreen) => (isSmallScreen ? SearchIndexOverviewsConnector : SearchIndexTableConnector);
 
 class SearchIndex extends Component {
 
@@ -53,7 +50,9 @@ class SearchIndex extends Component {
       lastToggled: null,
       allSelected: false,
       allUnselected: false,
-      selectedState: {}
+      selectedState: {},
+      isAddIndexerModalOpen: false,
+      isEditIndexerModalOpen: false
     };
   }
 
@@ -73,7 +72,7 @@ class SearchIndex extends Component {
 
     if (sortKey !== prevProps.sortKey ||
         sortDirection !== prevProps.sortDirection ||
-        hasDifferentItemsOrOrder(prevProps.items, items)
+        hasDifferentItemsOrOrder(prevProps.items, items, 'guid')
     ) {
       this.setJumpBarItems();
       this.setSelectedState();
@@ -84,6 +83,10 @@ class SearchIndex extends Component {
     }
   }
 
+  componentWillUnmount() {
+    window.removeEventListener('keyup', this.onKeyUp);
+  }
+
   //
   // Control
 
@@ -91,7 +94,14 @@ class SearchIndex extends Component {
     if (this.state.allUnselected) {
       return [];
     }
-    return getSelectedIds(this.state.selectedState, { parseIds: false });
+
+    return _.reduce(this.state.selectedState, (result, value, id) => {
+      if (value) {
+        result.push(id);
+      }
+
+      return result;
+    }, []);
   };
 
   setSelectedState() {
@@ -137,7 +147,7 @@ class SearchIndex extends Component {
     } = this.props;
 
     // Reset if not sorting by sortTitle
-    if (sortKey !== 'title') {
+    if (sortKey !== 'sortTitle') {
       this.setState({ jumpBarItems: { order: [] } });
       return;
     }
@@ -145,7 +155,7 @@ class SearchIndex extends Component {
     const characters = _.reduce(items, (acc, item) => {
       let char = item.sortTitle.charAt(0);
 
-      if (!isNaN(char)) {
+      if (!isNaN(Number(char))) {
         char = '#';
       }
 
@@ -176,6 +186,22 @@ class SearchIndex extends Component {
   //
   // Listeners
 
+  onAddIndexerPress = () => {
+    this.setState({ isAddIndexerModalOpen: true });
+  };
+
+  onAddIndexerModalClose = () => {
+    this.setState({ isAddIndexerModalOpen: false });
+  };
+
+  onAddIndexerSelectIndexer = () => {
+    this.setState({ isEditIndexerModalOpen: true });
+  };
+
+  onEditIndexerModalClose = () => {
+    this.setState({ isEditIndexerModalOpen: false });
+  };
+
   onJumpBarItemPress = (jumpToCharacter) => {
     this.setState({ jumpToCharacter });
   };
@@ -192,7 +218,8 @@ class SearchIndex extends Component {
 
   onKeyUp = (event) => {
     const jumpBarItems = this.state.jumpBarItems.order;
-    if (event.path.length === 4) {
+
+    if (event.composedPath && event.composedPath().length === 4) {
       if (event.keyCode === keyCodes.HOME && event.ctrlKey) {
         this.setState({ jumpToCharacter: jumpBarItems[0] });
       }
@@ -246,17 +273,19 @@ class SearchIndex extends Component {
       jumpToCharacter,
       selectedState,
       allSelected,
-      allUnselected
+      allUnselected,
+      isAddIndexerModalOpen,
+      isEditIndexerModalOpen
     } = this.state;
 
     const selectedIndexerIds = this.getSelectedIds();
 
     const ViewComponent = getViewComponent(isSmallScreen);
     const isLoaded = !!(!error && isPopulated && items.length && this.scrollerRef.current);
-    const hasNoIndexer = !totalItems;
+    const hasNoSearchResults = !totalItems;
 
     return (
-      <PageContent>
+      <PageContent title={translate('Search')}>
         <PageToolbar>
           <PageToolbarSection
             alignContent={align.RIGHT}
@@ -277,7 +306,7 @@ class SearchIndex extends Component {
             <SearchIndexSortMenu
               sortKey={sortKey}
               sortDirection={sortDirection}
-              isDisabled={hasNoIndexer}
+              isDisabled={hasNoSearchResults}
               onSortSelect={onSortSelect}
             />
 
@@ -285,7 +314,7 @@ class SearchIndex extends Component {
               selectedFilterKey={selectedFilterKey}
               filters={filters}
               customFilters={customFilters}
-              isDisabled={hasNoIndexer}
+              isDisabled={hasNoSearchResults}
               onFilterSelect={onFilterSelect}
             />
           </PageToolbarSection>
@@ -298,15 +327,17 @@ class SearchIndex extends Component {
             innerClassName={styles.tableInnerContentBody}
           >
             {
-              isFetching && !isPopulated &&
-                <LoadingIndicator />
+              isFetching && !isPopulated ?
+                <LoadingIndicator /> :
+                null
             }
 
             {
-              !isFetching && !!error &&
-                <div className={styles.errorMessage}>
+              !isFetching && !!error ?
+                <Alert kind={kinds.DANGER}>
                   {getErrorMessage(error, 'Failed to load search results from API')}
-                </div>
+                </Alert> :
+                null
             }
 
             {
@@ -331,25 +362,39 @@ class SearchIndex extends Component {
             }
 
             {
-              !error && !isFetching && !hasIndexers &&
+              !error && !isFetching && !hasIndexers ?
                 <NoIndexer
                   totalItems={0}
                   onAddIndexerPress={this.onAddIndexerPress}
-                />
+                /> :
+                null
             }
 
             {
-              !error && !isFetching && hasIndexers && !items.length &&
-                <NoSearchResults totalItems={totalItems} />
+              !error && !isFetching && isPopulated && hasIndexers && !items.length ?
+                <NoSearchResults totalItems={totalItems} /> :
+                null
             }
+
+            <AddIndexerModal
+              isOpen={isAddIndexerModalOpen}
+              onModalClose={this.onAddIndexerModalClose}
+              onSelectIndexer={this.onAddIndexerSelectIndexer}
+            />
+
+            <EditIndexerModalConnector
+              isOpen={isEditIndexerModalOpen}
+              onModalClose={this.onEditIndexerModalClose}
+            />
           </PageContentBody>
 
           {
-            isLoaded && !!jumpBarItems.order.length &&
+            isLoaded && !!jumpBarItems.order.length ?
               <PageJumpBar
                 items={jumpBarItems}
                 onItemPress={this.onJumpBarItemPress}
-              />
+              /> :
+              null
           }
         </div>
 

@@ -1,6 +1,16 @@
-import React, { useCallback, useMemo, useRef, useState } from 'react';
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { SelectProvider } from 'App/SelectContext';
+import ClientSideCollectionAppState from 'App/State/ClientSideCollectionAppState';
+import IndexerAppState, {
+  IndexerIndexAppState,
+} from 'App/State/IndexerAppState';
 import { APP_INDEXER_SYNC } from 'Commands/commandNames';
 import LoadingIndicator from 'Components/Loading/LoadingIndicator';
 import PageContent from 'Components/Page/PageContent';
@@ -18,12 +28,17 @@ import AddIndexerModal from 'Indexer/Add/AddIndexerModal';
 import EditIndexerModalConnector from 'Indexer/Edit/EditIndexerModalConnector';
 import NoIndexer from 'Indexer/NoIndexer';
 import { executeCommand } from 'Store/Actions/commandActions';
-import { testAllIndexers } from 'Store/Actions/indexerActions';
+import {
+  cloneIndexer,
+  fetchIndexers,
+  testAllIndexers,
+} from 'Store/Actions/indexerActions';
 import {
   setIndexerFilter,
   setIndexerSort,
   setIndexerTableOption,
 } from 'Store/Actions/indexerIndexActions';
+import { fetchIndexerStatus } from 'Store/Actions/indexerStatusActions';
 import scrollPositions from 'Store/scrollPositions';
 import createCommandExecutingSelector from 'Store/Selectors/createCommandExecutingSelector';
 import createDimensionsSelector from 'Store/Selectors/createDimensionsSelector';
@@ -41,9 +56,7 @@ import IndexerIndexTable from './Table/IndexerIndexTable';
 import IndexerIndexTableOptions from './Table/IndexerIndexTableOptions';
 import styles from './IndexerIndex.css';
 
-function getViewComponent() {
-  return IndexerIndexTable;
-}
+const getViewComponent = () => IndexerIndexTable;
 
 interface IndexerIndexProps {
   initialScrollTop?: number;
@@ -64,27 +77,25 @@ const IndexerIndex = withScrollPosition((props: IndexerIndexProps) => {
     sortKey,
     sortDirection,
     view,
-  } = useSelector(
-    createIndexerClientSideCollectionItemsSelector('indexerIndex')
-  );
+  }: IndexerAppState & IndexerIndexAppState & ClientSideCollectionAppState =
+    useSelector(createIndexerClientSideCollectionItemsSelector('indexerIndex'));
 
   const isSyncingIndexers = useSelector(
     createCommandExecutingSelector(APP_INDEXER_SYNC)
   );
   const { isSmallScreen } = useSelector(createDimensionsSelector());
   const dispatch = useDispatch();
-  const scrollerRef = useRef<HTMLDivElement>();
+  const scrollerRef = useRef<HTMLDivElement>(null);
   const [isAddIndexerModalOpen, setIsAddIndexerModalOpen] = useState(false);
   const [isEditIndexerModalOpen, setIsEditIndexerModalOpen] = useState(false);
-  const [jumpToCharacter, setJumpToCharacter] = useState<string | null>(null);
+  const [jumpToCharacter, setJumpToCharacter] = useState<string | undefined>(
+    undefined
+  );
   const [isSelectMode, setIsSelectMode] = useState(false);
 
-  const onAppIndexerSyncPress = useCallback(() => {
-    dispatch(
-      executeCommand({
-        name: APP_INDEXER_SYNC,
-      })
-    );
+  useEffect(() => {
+    dispatch(fetchIndexers());
+    dispatch(fetchIndexerStatus());
   }, [dispatch]);
 
   const onAddIndexerPress = useCallback(() => {
@@ -103,6 +114,24 @@ const IndexerIndex = withScrollPosition((props: IndexerIndexProps) => {
     setIsEditIndexerModalOpen(false);
   }, [setIsEditIndexerModalOpen]);
 
+  const onCloneIndexerPress = useCallback(
+    (id: number) => {
+      dispatch(cloneIndexer({ id }));
+
+      setIsEditIndexerModalOpen(true);
+    },
+    [dispatch, setIsEditIndexerModalOpen]
+  );
+
+  const onAppIndexerSyncPress = useCallback(() => {
+    dispatch(
+      executeCommand({
+        name: APP_INDEXER_SYNC,
+        forceSync: true,
+      })
+    );
+  }, [dispatch]);
+
   const onTestAllPress = useCallback(() => {
     dispatch(testAllIndexers());
   }, [dispatch]);
@@ -112,53 +141,53 @@ const IndexerIndex = withScrollPosition((props: IndexerIndexProps) => {
   }, [isSelectMode, setIsSelectMode]);
 
   const onTableOptionChange = useCallback(
-    (payload) => {
+    (payload: unknown) => {
       dispatch(setIndexerTableOption(payload));
     },
     [dispatch]
   );
 
   const onSortSelect = useCallback(
-    (value) => {
+    (value: string) => {
       dispatch(setIndexerSort({ sortKey: value }));
     },
     [dispatch]
   );
 
   const onFilterSelect = useCallback(
-    (value) => {
+    (value: string) => {
       dispatch(setIndexerFilter({ selectedFilterKey: value }));
     },
     [dispatch]
   );
 
   const onJumpBarItemPress = useCallback(
-    (character) => {
+    (character: string) => {
       setJumpToCharacter(character);
     },
     [setJumpToCharacter]
   );
 
   const onScroll = useCallback(
-    ({ scrollTop }) => {
-      setJumpToCharacter(null);
-      scrollPositions.seriesIndex = scrollTop;
+    ({ scrollTop }: { scrollTop: number }) => {
+      setJumpToCharacter(undefined);
+      scrollPositions.indexerIndex = scrollTop;
     },
     [setJumpToCharacter]
   );
 
   const jumpBarItems = useMemo(() => {
-    // Reset if not sorting by sortTitle
-    if (sortKey !== 'sortTitle') {
+    // Reset if not sorting by sortName
+    if (sortKey !== 'sortName') {
       return {
         order: [],
       };
     }
 
-    const characters = items.reduce((acc, item) => {
-      let char = item.sortTitle.charAt(0);
+    const characters = items.reduce((acc: Record<string, number>, item) => {
+      let char = item.sortName.charAt(0);
 
-      if (!isNaN(char)) {
+      if (!isNaN(Number(char))) {
         char = '#';
       }
 
@@ -190,7 +219,7 @@ const IndexerIndex = withScrollPosition((props: IndexerIndexProps) => {
 
   return (
     <SelectProvider items={items}>
-      <PageContent>
+      <PageContent title={translate('Indexers')}>
         <PageToolbar>
           <PageToolbarSection>
             <PageToolbarButton
@@ -222,7 +251,11 @@ const IndexerIndex = withScrollPosition((props: IndexerIndexProps) => {
             <PageToolbarSeparator />
 
             <IndexerIndexSelectModeButton
-              label={isSelectMode ? 'Stop Selecting' : 'Select Indexer'}
+              label={
+                isSelectMode
+                  ? translate('StopSelecting')
+                  : translate('SelectIndexers')
+              }
               iconName={isSelectMode ? icons.SERIES_ENDED : icons.CHECK}
               isSelectMode={isSelectMode}
               overflowComponent={IndexerIndexSelectModeMenuItem}
@@ -230,7 +263,7 @@ const IndexerIndex = withScrollPosition((props: IndexerIndexProps) => {
             />
 
             <IndexerIndexSelectAllButton
-              label="SelectAll"
+              label={translate('SelectAll')}
               isSelectMode={isSelectMode}
               overflowComponent={IndexerIndexSelectAllMenuItem}
             />
@@ -245,7 +278,10 @@ const IndexerIndex = withScrollPosition((props: IndexerIndexProps) => {
               optionsComponent={IndexerIndexTableOptions}
               onTableOptionChange={onTableOptionChange}
             >
-              <PageToolbarButton label="Options" iconName={icons.TABLE} />
+              <PageToolbarButton
+                label={translate('Options')}
+                iconName={icons.TABLE}
+              />
             </TableOptionsModalWrapper>
 
             <PageToolbarSeparator />
@@ -270,13 +306,17 @@ const IndexerIndex = withScrollPosition((props: IndexerIndexProps) => {
           <PageContentBody
             ref={scrollerRef}
             className={styles.contentBody}
+            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+            // @ts-ignore
             innerClassName={styles[`${view}InnerContentBody`]}
             initialScrollTop={props.initialScrollTop}
             onScroll={onScroll}
           >
             {isFetching && !isPopulated ? <LoadingIndicator /> : null}
 
-            {!isFetching && !!error ? <div>Unable to load indexers</div> : null}
+            {!isFetching && !!error ? (
+              <div>{translate('UnableToLoadIndexers')}</div>
+            ) : null}
 
             {isLoaded ? (
               <div className={styles.contentBodyContainer}>
@@ -288,6 +328,7 @@ const IndexerIndex = withScrollPosition((props: IndexerIndexProps) => {
                   jumpToCharacter={jumpToCharacter}
                   isSelectMode={isSelectMode}
                   isSmallScreen={isSmallScreen}
+                  onCloneIndexerPress={onCloneIndexerPress}
                 />
 
                 <IndexerIndexFooter />
@@ -295,7 +336,10 @@ const IndexerIndex = withScrollPosition((props: IndexerIndexProps) => {
             ) : null}
 
             {!error && isPopulated && !items.length ? (
-              <NoIndexer totalItems={totalItems} />
+              <NoIndexer
+                totalItems={totalItems}
+                onAddIndexerPress={onAddIndexerPress}
+              />
             ) : null}
           </PageContentBody>
           {isLoaded && !!jumpBarItems.order.length ? (

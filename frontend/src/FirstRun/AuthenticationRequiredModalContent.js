@@ -11,7 +11,7 @@ import ModalContent from 'Components/Modal/ModalContent';
 import ModalFooter from 'Components/Modal/ModalFooter';
 import ModalHeader from 'Components/Modal/ModalHeader';
 import { inputTypes, kinds } from 'Helpers/Props';
-import { authenticationMethodOptions, authenticationRequiredOptions, authenticationRequiredWarning } from 'Settings/General/SecuritySettings';
+import { authenticationMethodOptions, authenticationRequiredOptions } from 'Settings/General/SecuritySettings';
 import translate from 'Utilities/String/translate';
 import styles from './AuthenticationRequiredModalContent.css';
 
@@ -34,7 +34,8 @@ function AuthenticationRequiredModalContent(props) {
     authenticationMethod,
     authenticationRequired,
     username,
-    password
+    password,
+    passwordConfirmation
   } = settings;
 
   const authenticationEnabled = authenticationMethod && authenticationMethod.value !== 'none';
@@ -63,71 +64,75 @@ function AuthenticationRequiredModalContent(props) {
           className={styles.authRequiredAlert}
           kind={kinds.WARNING}
         >
-          {authenticationRequiredWarning}
+          {translate('AuthenticationRequiredWarning')}
         </Alert>
 
         {
           isPopulated && !error ?
             <div>
               <FormGroup>
-                <FormLabel>{translate('Authentication')}</FormLabel>
+                <FormLabel>{translate('AuthenticationMethod')}</FormLabel>
 
                 <FormInputGroup
                   type={inputTypes.SELECT}
                   name="authenticationMethod"
                   values={authenticationMethodOptions}
                   helpText={translate('AuthenticationMethodHelpText')}
+                  helpTextWarning={authenticationMethod.value === 'none' ? translate('AuthenticationMethodHelpTextWarning') : undefined}
+                  helpLink="https://wiki.servarr.com/prowlarr/faq#forced-authentication"
                   onChange={onInputChange}
                   {...authenticationMethod}
                 />
               </FormGroup>
 
-              {
-                authenticationEnabled ?
-                  <FormGroup>
-                    <FormLabel>{translate('AuthenticationRequired')}</FormLabel>
+              <FormGroup>
+                <FormLabel>{translate('AuthenticationRequired')}</FormLabel>
 
-                    <FormInputGroup
-                      type={inputTypes.SELECT}
-                      name="authenticationRequired"
-                      values={authenticationRequiredOptions}
-                      helpText={translate('AuthenticationRequiredHelpText')}
-                      onChange={onInputChange}
-                      {...authenticationRequired}
-                    />
-                  </FormGroup> :
-                  null
-              }
+                <FormInputGroup
+                  type={inputTypes.SELECT}
+                  name="authenticationRequired"
+                  values={authenticationRequiredOptions}
+                  helpText={translate('AuthenticationRequiredHelpText')}
+                  onChange={onInputChange}
+                  {...authenticationRequired}
+                />
+              </FormGroup>
 
-              {
-                authenticationEnabled ?
-                  <FormGroup>
-                    <FormLabel>{translate('Username')}</FormLabel>
+              <FormGroup>
+                <FormLabel>{translate('Username')}</FormLabel>
 
-                    <FormInputGroup
-                      type={inputTypes.TEXT}
-                      name="username"
-                      onChange={onInputChange}
-                      {...username}
-                    />
-                  </FormGroup> :
-                  null
-              }
+                <FormInputGroup
+                  type={inputTypes.TEXT}
+                  name="username"
+                  onChange={onInputChange}
+                  helpTextWarning={username?.value ? undefined : translate('AuthenticationRequiredUsernameHelpTextWarning')}
+                  {...username}
+                />
+              </FormGroup>
 
-              {
-                authenticationEnabled ?
-                  <FormGroup>
-                    <FormLabel>{translate('Password')}</FormLabel>
+              <FormGroup>
+                <FormLabel>{translate('Password')}</FormLabel>
 
-                    <FormInputGroup
-                      type={inputTypes.PASSWORD}
-                      name="password"
-                      onChange={onInputChange}
-                      {...password}
-                    />
-                  </FormGroup> :
-                  null
-              }
+                <FormInputGroup
+                  type={inputTypes.PASSWORD}
+                  name="password"
+                  onChange={onInputChange}
+                  helpTextWarning={password?.value ? undefined : translate('AuthenticationRequiredPasswordHelpTextWarning')}
+                  {...password}
+                />
+              </FormGroup>
+
+              <FormGroup>
+                <FormLabel>{translate('PasswordConfirmation')}</FormLabel>
+
+                <FormInputGroup
+                  type={inputTypes.PASSWORD}
+                  name="passwordConfirmation"
+                  onChange={onInputChange}
+                  helpTextWarning={passwordConfirmation?.value ? undefined : translate('AuthenticationRequiredPasswordConfirmationHelpTextWarning')}
+                  {...passwordConfirmation}
+                />
+              </FormGroup>
             </div> :
             null
         }

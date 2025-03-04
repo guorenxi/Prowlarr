@@ -1,13 +1,14 @@
 using System.Text.RegularExpressions;
+using NzbDrone.Common.Extensions;
 
 namespace NzbDrone.Core.IndexerSearch
 {
     public class NewznabRequest
     {
-        private static readonly Regex TvRegex = new Regex(@"\{((?:imdbid\:)(?<imdbid>[^{]+)|(?:rid\:)(?<rid>[^{]+)|(?:tvdbid\:)(?<tvdbid>[^{]+)|(?:tmdbid\:)(?<tmdbid>[^{]+)|(?:doubanid\:)(?<doubanid>[^{]+)|(?:season\:)(?<season>[^{]+)|(?:episode\:)(?<episode>[^{]+)|(?:year\:)(?<year>[^{]+)|(?:genre\:)(?<genre>[^{]+))\}", RegexOptions.Compiled | RegexOptions.IgnoreCase);
-        private static readonly Regex MovieRegex = new Regex(@"\{((?:imdbid\:)(?<imdbid>[^{]+)|(?:doubanid\:)(?<doubanid>[^{]+)|(?:tmdbid\:)(?<tmdbid>[^{]+)|(?:traktid\:)(?<traktid>[^{]+)|(?:year\:)(?<year>[^{]+)|(?:genre\:)(?<genre>[^{]+))\}", RegexOptions.Compiled | RegexOptions.IgnoreCase);
-        private static readonly Regex MusicRegex = new Regex(@"\{((?:artist\:)(?<artist>[^{]+)|(?:album\:)(?<album>[^{]+)|(?:track\:)(?<track>[^{]+)|(?:label\:)(?<label>[^{]+)|(?:year\:)(?<year>[^{]+)|(?:genre\:)(?<genre>[^{]+))\}", RegexOptions.Compiled | RegexOptions.IgnoreCase);
-        private static readonly Regex BookRegex = new Regex(@"\{((?:author\:)(?<author>[^{]+)|(?:publisher\:)(?<publisher>[^{]+)|(?:title\:)(?<title>[^{]+)|(?:year\:)(?<year>[^{]+)|(?:genre\:)(?<genre>[^{]+))\}", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+        private static readonly Regex TvRegex = new (@"\{((?:imdbid\:)(?<imdbid>[^{]+)|(?:rid\:)(?<rid>[^{]+)|(?:tvdbid\:)(?<tvdbid>[^{]+)|(?:tmdbid\:)(?<tmdbid>[^{]+)|(?:tvmazeid\:)(?<tvmazeid>[^{]+)|(?:doubanid\:)(?<doubanid>[^{]+)|(?:season\:)(?<season>[^{]+)|(?:episode\:)(?<episode>[^{]+)|(?:year\:)(?<year>[^{]+)|(?:genre\:)(?<genre>[^{]+))\}", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+        private static readonly Regex MovieRegex = new (@"\{((?:imdbid\:)(?<imdbid>[^{]+)|(?:doubanid\:)(?<doubanid>[^{]+)|(?:tmdbid\:)(?<tmdbid>[^{]+)|(?:traktid\:)(?<traktid>[^{]+)|(?:year\:)(?<year>[^{]+)|(?:genre\:)(?<genre>[^{]+))\}", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+        private static readonly Regex MusicRegex = new (@"\{((?:artist\:)(?<artist>[^{]+)|(?:album\:)(?<album>[^{]+)|(?:track\:)(?<track>[^{]+)|(?:label\:)(?<label>[^{]+)|(?:year\:)(?<year>[^{]+)|(?:genre\:)(?<genre>[^{]+))\}", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+        private static readonly Regex BookRegex = new (@"\{((?:author\:)(?<author>[^{]+)|(?:publisher\:)(?<publisher>[^{]+)|(?:title\:)(?<title>[^{]+)|(?:year\:)(?<year>[^{]+)|(?:genre\:)(?<genre>[^{]+))\}", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
         public string t { get; set; }
         public string q { get; set; }
@@ -17,6 +18,10 @@ namespace NzbDrone.Core.IndexerSearch
         public string extended { get; set; }
         public int? limit { get; set; }
         public int? offset { get; set; }
+        public int? minage { get; set; }
+        public int? maxage { get; set; }
+        public long? minsize { get; set; }
+        public long? maxsize { get; set; }
         public int? rid { get; set; }
         public int? tvmazeid { get; set; }
         public int? traktid { get; set; }
@@ -40,6 +45,11 @@ namespace NzbDrone.Core.IndexerSearch
 
         public void QueryToParams()
         {
+            if (q.IsNullOrWhiteSpace())
+            {
+                return;
+            }
+
             if (t == "tvsearch")
             {
                 var matches = TvRegex.Matches(q);
@@ -56,6 +66,11 @@ namespace NzbDrone.Core.IndexerSearch
                         tmdbid = int.TryParse(match.Groups["tmdbid"].Value, out var tmdb) ? tmdb : null;
                     }
 
+                    if (match.Groups["tvmazeid"].Success)
+                    {
+                        tvmazeid = int.TryParse(match.Groups["tvmazeid"].Value, out var tvmaze) ? tvmaze : null;
+                    }
+
                     if (match.Groups["doubanid"].Success)
                     {
                         doubanid = int.TryParse(match.Groups["doubanid"].Value, out var tmdb) ? tmdb : null;
@@ -68,7 +83,7 @@ namespace NzbDrone.Core.IndexerSearch
 
                     if (match.Groups["season"].Success)
                     {
-                        season = int.TryParse(match.Groups["season"].Value, out var seasonParsed) ? seasonParsed : null;
+                        season = int.TryParse(match.Groups["season"].Value, out var parsedSeason) ? parsedSeason : null;
                     }
 
                     if (match.Groups["imdbid"].Success)

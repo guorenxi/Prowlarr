@@ -19,6 +19,7 @@ using NzbDrone.Core.IndexerSearch.Definitions;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.Parser;
 using NzbDrone.Core.Parser.Model;
+using NzbDrone.Core.ThingiProvider;
 using NzbDrone.Core.Validation;
 
 namespace NzbDrone.Core.Indexers.Definitions;
@@ -30,7 +31,6 @@ public class Shazbat : TorrentIndexerBase<ShazbatSettings>
     public override string Description => "Shazbat is a PRIVATE Torrent Tracker with highly curated TV content";
     public override string Language => "en-US";
     public override Encoding Encoding => Encoding.UTF8;
-    public override DownloadProtocol Protocol => DownloadProtocol.Torrent;
     public override IndexerPrivacy Privacy => IndexerPrivacy.Private;
     public override IndexerCapabilities Capabilities => SetCapabilities();
     public override TimeSpan RateLimit => TimeSpan.FromSeconds(5.1);
@@ -51,7 +51,7 @@ public class Shazbat : TorrentIndexerBase<ShazbatSettings>
 
     public override IParseIndexerResponse GetParser()
     {
-        return new ShazbatParser(Settings, RateLimit, _httpClient, _logger);
+        return new ShazbatParser(Definition, Settings, RateLimit, _httpClient, _logger);
     }
 
     protected override async Task DoLogin()
@@ -79,7 +79,7 @@ public class Shazbat : TorrentIndexerBase<ShazbatSettings>
         if (CheckIfLoginNeeded(response))
         {
             var parser = new HtmlParser();
-            var dom = parser.ParseDocument(response.Content);
+            using var dom = await parser.ParseDocumentAsync(response.Content);
             var errorMessage = dom.QuerySelector("div#fail .modal-body")?.TextContent.Trim();
 
             throw new IndexerAuthException(errorMessage ?? "Unknown error message, please report.");
@@ -102,7 +102,11 @@ public class Shazbat : TorrentIndexerBase<ShazbatSettings>
         {
             TvSearchParams = new List<TvSearchParam>
             {
-                TvSearchParam.Q
+                TvSearchParam.Q, TvSearchParam.Season, TvSearchParam.Ep
+            },
+            Flags = new List<IndexerFlag>
+            {
+                IndexerFlag.Scene
             }
         };
 
@@ -199,6 +203,7 @@ public class ShazbatRequestGenerator : IIndexerRequestGenerator
 
 public class ShazbatParser : IParseIndexerResponse
 {
+    private readonly ProviderDefinition _definition;
     private readonly ShazbatSettings _settings;
     private readonly TimeSpan _rateLimit;
     private readonly IIndexerHttpClient _httpClient;
@@ -207,8 +212,9 @@ public class ShazbatParser : IParseIndexerResponse
     private readonly Regex _torrentInfoRegex = new (@"\((?<size>\d+)\):(?<seeders>\d+) \/ :(?<leechers>\d+)$", RegexOptions.Compiled);
     private readonly HashSet<string> _hdResolutions = new () { "1080p", "1080i", "720p" };
 
-    public ShazbatParser(ShazbatSettings settings, TimeSpan rateLimit, IIndexerHttpClient httpClient, Logger logger)
+    public ShazbatParser(ProviderDefinition definition, ShazbatSettings settings, TimeSpan rateLimit, IIndexerHttpClient httpClient, Logger logger)
     {
+        _definition = definition;
         _settings = settings;
         _rateLimit = rateLimit;
         _httpClient = httpClient;
@@ -220,7 +226,7 @@ public class ShazbatParser : IParseIndexerResponse
         var releaseInfos = new List<ReleaseInfo>();
 
         var parser = new HtmlParser();
-        var dom = parser.ParseDocument(indexerResponse.Content);
+        using var dom = parser.ParseDocument(indexerResponse.Content);
 
         var hasGlobalFreeleech = dom.QuerySelector("span:contains(\"Freeleech until:\"):has(span.datetime)") != null;
 
@@ -269,7 +275,7 @@ public class ShazbatParser : IParseIndexerResponse
                 _logger.Debug("Downloading Feed " + showRequest.ToString());
 
                 var releaseRequest = new IndexerRequest(showRequest);
-                var releaseResponse = new IndexerResponse(releaseRequest, _httpClient.Execute(releaseRequest.HttpRequest));
+                var releaseResponse = new IndexerResponse(releaseRequest, _httpClient.ExecuteProxied(releaseRequest.HttpRequest, _definition));
 
                 if (releaseResponse.HttpResponse.Content.ContainsIgnoreCase("sign in now"))
                 {
@@ -300,7 +306,7 @@ public class ShazbatParser : IParseIndexerResponse
         var releaseInfos = new List<ReleaseInfo>();
 
         var parser = new HtmlParser();
-        var dom = parser.ParseDocument(indexerResponse.Content);
+        using var dom = parser.ParseDocument(indexerResponse.Content);
 
         if (!hasGlobalFreeleech)
         {
@@ -336,6 +342,7 @@ public class ShazbatParser : IParseIndexerResponse
                 Seeders = seeders,
                 Peers = seeders + leechers,
                 PublishDate = publishDate,
+                Scene = true,
                 Genres = row.QuerySelectorAll("label.label-tag").Select(t => t.TextContent.Trim()).ToList(),
                 DownloadVolumeFactor = hasGlobalFreeleech ? 0 : 1,
                 UploadVolumeFactor = 1,

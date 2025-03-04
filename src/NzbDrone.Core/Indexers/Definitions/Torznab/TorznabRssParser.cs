@@ -28,6 +28,12 @@ namespace NzbDrone.Core.Indexers.Torznab
 
         protected override bool PreProcess(IndexerResponse indexerResponse)
         {
+            if (indexerResponse.HttpResponse.HasHttpError &&
+                (indexerResponse.HttpResponse.Headers.ContentType == null || !indexerResponse.HttpResponse.Headers.ContentType.Contains("xml")))
+            {
+                base.PreProcess(indexerResponse);
+            }
+
             var xdoc = LoadXmlDocument(indexerResponse);
             var error = xdoc.Descendants("error").FirstOrDefault();
 
@@ -94,16 +100,17 @@ namespace NzbDrone.Core.Indexers.Torznab
         protected override bool PostProcess(IndexerResponse indexerResponse, List<XElement> items, List<ReleaseInfo> releases)
         {
             var enclosureTypes = items.SelectMany(GetEnclosures).Select(v => v.Type).Distinct().ToArray();
+
             if (enclosureTypes.Any() && enclosureTypes.Intersect(PreferredEnclosureMimeTypes).Empty())
             {
                 if (enclosureTypes.Intersect(UsenetEnclosureMimeTypes).Any())
                 {
-                    _logger.Warn("Feed does not contain {0}, found {1}, did you intend to add a Newznab indexer?", TorrentEnclosureMimeType, enclosureTypes[0]);
+                    _logger.Warn("{0} does not contain {1}, found {2}, did you intend to add a Newznab indexer?", indexerResponse.Request.Url, TorrentEnclosureMimeType, enclosureTypes[0]);
+
+                    return false;
                 }
-                else
-                {
-                    _logger.Warn("Feed does not contain {0}, found {1}.", TorrentEnclosureMimeType, enclosureTypes[0]);
-                }
+
+                _logger.Warn("{0} does not contain {1}, found {2}.", indexerResponse.Request.Url, TorrentEnclosureMimeType, enclosureTypes[0]);
             }
 
             return true;
@@ -119,12 +126,32 @@ namespace NzbDrone.Core.Indexers.Torznab
             return ParseUrl(item.TryGetValue("comments"));
         }
 
+        protected override List<string> GetLanguages(XElement item)
+        {
+            var languages = TryGetMultipleTorznabAttributes(item, "language");
+            var results = new List<string>();
+
+            // Try to find <language> elements for some indexers that suck at following the rules.
+            if (languages.Count == 0)
+            {
+                languages = item.Elements("language").Select(e => e.Value).ToList();
+            }
+
+            foreach (var language in languages)
+            {
+                if (language.IsNotNullOrWhiteSpace())
+                {
+                    results.Add(language);
+                }
+            }
+
+            return results;
+        }
+
         protected override long GetSize(XElement item)
         {
-            long size;
-
             var sizeString = TryGetTorznabAttribute(item, "size");
-            if (!sizeString.IsNullOrWhiteSpace() && long.TryParse(sizeString, out size))
+            if (!sizeString.IsNullOrWhiteSpace() && long.TryParse(sizeString, out var size))
             {
                 return size;
             }
@@ -251,6 +278,18 @@ namespace NzbDrone.Core.Indexers.Torznab
                 flags.Add(IndexerFlag.FreeLeech);
             }
 
+            var tags = TryGetMultipleTorznabAttributes(item, "tag");
+
+            if (tags.Any(t => t.EqualsIgnoreCase("internal")))
+            {
+                flags.Add(IndexerFlag.Internal);
+            }
+
+            if (tags.Any(t => t.EqualsIgnoreCase("scene")))
+            {
+                flags.Add(IndexerFlag.Scene);
+            }
+
             return flags;
         }
 
@@ -270,9 +309,7 @@ namespace NzbDrone.Core.Indexers.Torznab
         {
             var attr = TryGetTorznabAttribute(item, key, defaultValue.ToString());
 
-            float result = 0;
-
-            if (float.TryParse(attr, out result))
+            if (float.TryParse(attr, out var result))
             {
                 return result;
             }
@@ -302,9 +339,8 @@ namespace NzbDrone.Core.Indexers.Torznab
             foreach (var attr in attributes)
             {
                 var idString = TryGetTorznabAttribute(item, attr);
-                int idInt;
 
-                if (!idString.IsNullOrWhiteSpace() && int.TryParse(idString, out idInt))
+                if (!idString.IsNullOrWhiteSpace() && int.TryParse(idString, out var idInt))
                 {
                     return idInt;
                 }

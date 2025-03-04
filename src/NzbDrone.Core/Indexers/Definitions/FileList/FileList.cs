@@ -1,21 +1,23 @@
 using System.Collections.Generic;
+using System.Linq;
 using NLog;
 using NzbDrone.Core.Configuration;
+using NzbDrone.Core.IndexerSearch.Definitions;
 using NzbDrone.Core.Messaging.Events;
+using NzbDrone.Core.Parser.Model;
 
 namespace NzbDrone.Core.Indexers.Definitions.FileList;
 
 public class FileList : TorrentIndexerBase<FileListSettings>
 {
     public override string Name => "FileList.io";
-    public override string[] IndexerUrls => new[]
+    public override string[] IndexerUrls => new[] { "https://filelist.io/" };
+    public override string[] LegacyUrls => new[]
     {
-        "https://filelist.io/",
+        "https://filelist.io",
         "https://flro.org/"
     };
-    public override string[] LegacyUrls => new[] { "https://filelist.io" };
     public override string Description => "FileList (FL) is a ROMANIAN Private Torrent Tracker for 0DAY / GENERAL";
-    public override DownloadProtocol Protocol => DownloadProtocol.Torrent;
     public override IndexerPrivacy Privacy => IndexerPrivacy.Private;
     public override bool SupportsRss => true;
     public override bool SupportsSearch => true;
@@ -39,6 +41,13 @@ public class FileList : TorrentIndexerBase<FileListSettings>
     public override IParseIndexerResponse GetParser()
     {
         return new FileListParser(Settings, Capabilities.Categories);
+    }
+
+    protected override IList<ReleaseInfo> CleanupReleases(IEnumerable<ReleaseInfo> releases, SearchCriteriaBase searchCriteria)
+    {
+        var cleanReleases = base.CleanupReleases(releases, searchCriteria);
+
+        return FilterReleasesByQuery(cleanReleases, searchCriteria).ToList();
     }
 
     private IndexerCapabilities SetCapabilities()
@@ -94,6 +103,8 @@ public class FileList : TorrentIndexerBase<FileListSettings>
         caps.Categories.AddCategoryMapping(25, NewznabStandardCategory.Movies3D, "Filme 3D");
         caps.Categories.AddCategoryMapping(26, NewznabStandardCategory.MoviesBluRay, "Filme 4K Blu-Ray");
         caps.Categories.AddCategoryMapping(27, NewznabStandardCategory.TVUHD, "Seriale 4K");
+        caps.Categories.AddCategoryMapping(28, NewznabStandardCategory.MoviesForeign, "RO Dubbed");
+        caps.Categories.AddCategoryMapping(28, NewznabStandardCategory.TVForeign, "RO Dubbed");
 
         return caps;
     }

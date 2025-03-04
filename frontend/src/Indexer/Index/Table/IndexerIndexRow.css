@@ -11,6 +11,12 @@
   flex: 0 0 60px;
 }
 
+.id {
+  composes: cell;
+
+  flex: 0 0 60px;
+}
+
 .sortName {
   composes: cell;
 
@@ -19,7 +25,12 @@
 
 .priority,
 .protocol,
-.privacy {
+.privacy,
+.minimumSeeders,
+.seedRatio,
+.seedTime,
+.packSeedTime,
+.preferMagnetUrl {
   composes: cell;
 
   flex: 0 0 90px;

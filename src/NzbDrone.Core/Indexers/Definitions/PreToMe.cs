@@ -29,7 +29,6 @@ public class PreToMe : TorrentIndexerBase<PreToMeSettings>
     public override string Description => "PreToMe is a ratioless 0Day/General tracker.";
     public override string Language => "en-US";
     public override Encoding Encoding => Encoding.GetEncoding("iso-8859-1");
-    public override DownloadProtocol Protocol => DownloadProtocol.Torrent;
     public override IndexerPrivacy Privacy => IndexerPrivacy.Private;
     public override IndexerCapabilities Capabilities => SetCapabilities();
 
@@ -86,7 +85,7 @@ public class PreToMe : TorrentIndexerBase<PreToMeSettings>
         if (CheckIfLoginNeeded(response))
         {
             var parser = new HtmlParser();
-            var dom = parser.ParseDocument(response.Content);
+            using var dom = parser.ParseDocument(response.Content);
             var errorMessage = dom.QuerySelector("table.body_table font[color~=\"red\"]")?.TextContent.Trim();
 
             throw new IndexerAuthException(errorMessage ?? "Unknown error message, please report.");
@@ -341,7 +340,7 @@ public class PreToMeParser : IParseIndexerResponse
         var releaseInfos = new List<ReleaseInfo>();
 
         var parser = new HtmlParser();
-        var dom = parser.ParseDocument(indexerResponse.Content);
+        using var dom = parser.ParseDocument(indexerResponse.Content);
 
         var rows = dom.QuerySelectorAll("table > tbody > tr.browse");
         foreach (var row in rows)

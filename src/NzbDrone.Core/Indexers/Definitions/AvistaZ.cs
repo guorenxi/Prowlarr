@@ -1,7 +1,9 @@
 using System.Collections.Generic;
 using NLog;
+using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Indexers.Definitions.Avistaz;
+using NzbDrone.Core.IndexerSearch.Definitions;
 using NzbDrone.Core.Messaging.Events;
 
 namespace NzbDrone.Core.Indexers.Definitions
@@ -25,12 +27,13 @@ namespace NzbDrone.Core.Indexers.Definitions
 
         public override IIndexerRequestGenerator GetRequestGenerator()
         {
-            return new AvistazRequestGenerator
+            return new AvistaZRequestGenerator
             {
                 Settings = Settings,
+                Capabilities = Capabilities,
+                PageSize = PageSize,
                 HttpClient = _httpClient,
-                Logger = _logger,
-                Capabilities = Capabilities
+                Logger = _logger
             };
         }
 
@@ -43,6 +46,8 @@ namespace NzbDrone.Core.Indexers.Definitions
         {
             var caps = new IndexerCapabilities
             {
+                LimitsDefault = PageSize,
+                LimitsMax = PageSize,
                 TvSearchParams = new List<TvSearchParam>
                 {
                     TvSearchParam.Q, TvSearchParam.Season, TvSearchParam.Ep, TvSearchParam.ImdbId, TvSearchParam.TvdbId, TvSearchParam.Genre
@@ -63,6 +68,17 @@ namespace NzbDrone.Core.Indexers.Definitions
             caps.Categories.AddCategoryMapping(2, NewznabStandardCategory.TVSD);
 
             return caps;
+        }
+    }
+
+    public class AvistaZRequestGenerator : AvistazRequestGenerator
+    {
+        // AvistaZ has episodes without season. eg Running Man E323
+        protected override string GetEpisodeSearchTerm(TvSearchCriteria searchCriteria)
+        {
+            return searchCriteria.Season is null or 0 && searchCriteria.Episode.IsNotNullOrWhiteSpace()
+                ? $"E{searchCriteria.Episode}"
+                : $"{searchCriteria.EpisodeSearchString}";
         }
     }
 

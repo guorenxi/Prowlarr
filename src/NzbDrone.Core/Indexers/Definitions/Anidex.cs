@@ -27,7 +27,6 @@ namespace NzbDrone.Core.Indexers.Definitions
         public override string Description => "Anidex is a Public torrent tracker and indexer, primarily for English fansub groups of anime";
         public override string Language => "en-US";
         public override Encoding Encoding => Encoding.UTF8;
-        public override DownloadProtocol Protocol => DownloadProtocol.Torrent;
         public override IndexerPrivacy Privacy => IndexerPrivacy.Public;
         public override IndexerCapabilities Capabilities => SetCapabilities();
 
@@ -56,7 +55,7 @@ namespace NzbDrone.Core.Indexers.Definitions
             {
                 TvSearchParams = new List<TvSearchParam>
                 {
-                    TvSearchParam.Q
+                    TvSearchParam.Q, TvSearchParam.Season, TvSearchParam.Ep
                 },
                 MusicSearchParams = new List<MusicSearchParam>
                 {
@@ -118,7 +117,7 @@ namespace NzbDrone.Core.Indexers.Definitions
         {
             var pageableRequests = new IndexerPageableRequestChain();
 
-            pageableRequests.Add(GetPagedRequests($"{searchCriteria.SanitizedSearchTerm}", searchCriteria.Categories));
+            pageableRequests.Add(GetPagedRequests($"{searchCriteria.SanitizedTvSearchString}", searchCriteria.Categories));
 
             return pageableRequests;
         }
@@ -161,7 +160,7 @@ namespace NzbDrone.Core.Indexers.Definitions
 
             var queryCats = _capabilities.Categories.MapTorznabCapsToTrackers(categories);
 
-            if (queryCats.Any())
+            if (queryCats.Any() && _capabilities.Categories.GetTrackerCategories().Except(queryCats).Any())
             {
                 searchUrl += "&id=" + string.Join(",", queryCats);
             }
@@ -201,7 +200,7 @@ namespace NzbDrone.Core.Indexers.Definitions
             var releaseInfos = new List<ReleaseInfo>();
 
             var parser = new HtmlParser();
-            var dom = parser.ParseDocument(indexerResponse.Content);
+            using var dom = parser.ParseDocument(indexerResponse.Content);
 
             var rows = dom.QuerySelectorAll("div#content table > tbody > tr");
             foreach (var row in rows)

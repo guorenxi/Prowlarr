@@ -5,6 +5,7 @@ using System.Linq;
 using System.Net;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Http;
+using NzbDrone.Common.Serializer;
 using NzbDrone.Core.Indexers.Exceptions;
 using NzbDrone.Core.Parser;
 using NzbDrone.Core.Parser.Model;
@@ -20,11 +21,11 @@ namespace NzbDrone.Core.Indexers.Definitions.Avistaz
 
         public IList<ReleaseInfo> ParseResponse(IndexerResponse indexerResponse)
         {
-            var torrentInfos = new List<TorrentInfo>();
+            var releaseInfos = new List<ReleaseInfo>();
 
             if (indexerResponse.HttpResponse.StatusCode == HttpStatusCode.NotFound)
             {
-                return torrentInfos.ToArray();
+                return releaseInfos.ToArray();
             }
 
             if (indexerResponse.HttpResponse.StatusCode == HttpStatusCode.TooManyRequests)
@@ -32,19 +33,25 @@ namespace NzbDrone.Core.Indexers.Definitions.Avistaz
                 throw new RequestLimitReachedException(indexerResponse, "API Request Limit Reached");
             }
 
+            if (indexerResponse.HttpResponse.StatusCode == HttpStatusCode.Unauthorized)
+            {
+                STJson.TryDeserialize<AvistazErrorResponse>(indexerResponse.HttpResponse.Content, out var errorResponse);
+                throw new IndexerAuthException(errorResponse?.Message ?? "Unauthorized request to indexer");
+            }
+
             if (indexerResponse.HttpResponse.StatusCode != HttpStatusCode.OK)
             {
-                throw new IndexerException(indexerResponse, $"Unexpected response status {indexerResponse.HttpResponse.StatusCode} code from API request");
+                throw new IndexerException(indexerResponse, $"Unexpected response status {indexerResponse.HttpResponse.StatusCode} code from indexer request");
             }
 
             if (!indexerResponse.HttpResponse.Headers.ContentType.Contains(HttpAccept.Json.Value))
             {
-                throw new IndexerException(indexerResponse, $"Unexpected response header {indexerResponse.HttpResponse.Headers.ContentType} from API request, expected {HttpAccept.Json.Value}");
+                throw new IndexerException(indexerResponse, $"Unexpected response header {indexerResponse.HttpResponse.Headers.ContentType} from indexer request, expected {HttpAccept.Json.Value}");
             }
 
-            var jsonResponse = new HttpResponse<AvistazResponse>(indexerResponse.HttpResponse);
+            var jsonResponse = STJson.Deserialize<AvistazResponse>(indexerResponse.HttpResponse.Content);
 
-            foreach (var row in jsonResponse.Resource.Data)
+            foreach (var row in jsonResponse.Data)
             {
                 var details = row.Url;
                 var link = row.Download;
@@ -68,23 +75,36 @@ namespace NzbDrone.Core.Indexers.Definitions.Avistaz
                     DownloadVolumeFactor = row.DownloadMultiply,
                     UploadVolumeFactor = row.UploadMultiply,
                     MinimumRatio = 1,
-                    MinimumSeedTime = 172800, // 48 hours
+                    MinimumSeedTime = 259200, // 72 hours
                     Languages = row.Audio?.Select(x => x.Language).ToList() ?? new List<string>(),
                     Subs = row.Subtitle?.Select(x => x.Language).ToList() ?? new List<string>()
                 };
 
+                if (row.FileSize is > 0)
+                {
+                    var sizeGigabytes = row.FileSize.Value / Math.Pow(1024, 3);
+
+                    release.MinimumSeedTime = sizeGigabytes switch
+                    {
+                        > 50.0 => (long)((100 * Math.Log(sizeGigabytes)) - 219.2023) * 3600,
+                        _ => 259200 + (long)(sizeGigabytes * 7200)
+                    };
+                }
+
                 if (row.MovieTvinfo != null)
                 {
-                    release.ImdbId = ParseUtil.GetImdbID(row.MovieTvinfo.Imdb).GetValueOrDefault();
+                    release.ImdbId = ParseUtil.GetImdbId(row.MovieTvinfo.Imdb).GetValueOrDefault();
                     release.TmdbId = row.MovieTvinfo.Tmdb.IsNullOrWhiteSpace() ? 0 : ParseUtil.TryCoerceInt(row.MovieTvinfo.Tmdb, out var tmdbResult) ? tmdbResult : 0;
                     release.TvdbId = row.MovieTvinfo.Tvdb.IsNullOrWhiteSpace() ? 0 : ParseUtil.TryCoerceInt(row.MovieTvinfo.Tvdb, out var tvdbResult) ? tvdbResult : 0;
                 }
 
-                torrentInfos.Add(release);
+                releaseInfos.Add(release);
             }
 
             // order by date
-            return torrentInfos.OrderByDescending(o => o.PublishDate).ToArray();
+            return releaseInfos
+                .OrderByDescending(o => o.PublishDate)
+                .ToArray();
         }
 
         // hook to adjust category parsing
@@ -115,7 +135,7 @@ namespace NzbDrone.Core.Indexers.Definitions.Avistaz
                     cats.Add(NewznabStandardCategory.Audio);
                     break;
                 default:
-                    throw new Exception(string.Format("Error parsing Avistaz category type {0}", row.Type));
+                    throw new Exception($"Error parsing Avistaz category type {row.Type}");
             }
 
             return cats;

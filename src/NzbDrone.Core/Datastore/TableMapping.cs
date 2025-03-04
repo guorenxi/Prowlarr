@@ -55,6 +55,7 @@ namespace NzbDrone.Core.Datastore
                   .Ignore(i => i.SupportsRss)
                   .Ignore(i => i.SupportsSearch)
                   .Ignore(i => i.SupportsRedirect)
+                  .Ignore(i => i.SupportsPagination)
                   .Ignore(i => i.Capabilities)
                   .HasOne(a => a.AppProfile, a => a.AppProfileId);
 
@@ -68,6 +69,7 @@ namespace NzbDrone.Core.Datastore
                   .Ignore(x => x.ImplementationName)
                   .Ignore(i => i.SupportsOnGrab)
                   .Ignore(i => i.SupportsOnHealthIssue)
+                  .Ignore(i => i.SupportsOnHealthRestored)
                   .Ignore(i => i.SupportsOnApplicationUpdate);
 
             Mapper.Entity<IndexerProxyDefinition>("IndexerProxies").RegisterModel()
@@ -89,10 +91,9 @@ namespace NzbDrone.Core.Datastore
                   .Ignore(c => c.Message);
 
             Mapper.Entity<IndexerStatus>("IndexerStatus").RegisterModel();
-
             Mapper.Entity<DownloadClientStatus>("DownloadClientStatus").RegisterModel();
-
             Mapper.Entity<ApplicationStatus>("ApplicationStatus").RegisterModel();
+            Mapper.Entity<NotificationStatus>("NotificationStatus").RegisterModel();
 
             Mapper.Entity<CustomFilter>("CustomFilters").RegisterModel();
             Mapper.Entity<UpdateHistory>("UpdateHistory").RegisterModel();
@@ -108,7 +109,6 @@ namespace NzbDrone.Core.Datastore
 
             SqlMapper.RemoveTypeMap(typeof(DateTime));
             SqlMapper.AddTypeHandler(new DapperUtcConverter());
-            SqlMapper.AddTypeHandler(new DapperTimeSpanConverter());
             SqlMapper.AddTypeHandler(new EmbeddedDocumentConverter<Dictionary<string, string>>());
             SqlMapper.AddTypeHandler(new CookieConverter());
             SqlMapper.AddTypeHandler(new EmbeddedDocumentConverter<List<int>>());
@@ -122,6 +122,9 @@ namespace NzbDrone.Core.Datastore
             SqlMapper.RemoveTypeMap(typeof(Guid));
             SqlMapper.RemoveTypeMap(typeof(Guid?));
             SqlMapper.AddTypeHandler(new GuidConverter());
+            SqlMapper.RemoveTypeMap(typeof(TimeSpan));
+            SqlMapper.RemoveTypeMap(typeof(TimeSpan?));
+            SqlMapper.AddTypeHandler(new TimeSpanConverter());
             SqlMapper.AddTypeHandler(new CommandConverter());
             SqlMapper.AddTypeHandler(new SystemVersionConverter());
         }

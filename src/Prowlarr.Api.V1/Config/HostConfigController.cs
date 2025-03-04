@@ -34,7 +34,6 @@ namespace Prowlarr.Api.V1.Config
 
             SharedValidator.RuleFor(c => c.BindAddress)
                            .ValidIpAddress()
-                           .NotListenAllIp4Address()
                            .When(c => c.BindAddress != "*" && c.BindAddress != "localhost");
 
             SharedValidator.RuleFor(c => c.Port).ValidPort();
@@ -47,16 +46,21 @@ namespace Prowlarr.Api.V1.Config
             SharedValidator.RuleFor(c => c.Password).NotEmpty().When(c => c.AuthenticationMethod == AuthenticationType.Basic ||
                                                                           c.AuthenticationMethod == AuthenticationType.Forms);
 
+            SharedValidator.RuleFor(c => c.PasswordConfirmation)
+                .Must((resource, p) => IsMatchingPassword(resource)).WithMessage("Must match Password");
+
             SharedValidator.RuleFor(c => c.SslPort).ValidPort().When(c => c.EnableSsl);
             SharedValidator.RuleFor(c => c.SslPort).NotEqual(c => c.Port).When(c => c.EnableSsl);
 
             SharedValidator.RuleFor(c => c.SslCertPath)
-                .Cascade(CascadeMode.StopOnFirstFailure)
+                .Cascade(CascadeMode.Stop)
                 .NotEmpty()
                 .IsValidPath()
                 .SetValidator(fileExistsValidator)
                 .Must((resource, path) => IsValidSslCertificate(resource)).WithMessage("Invalid SSL certificate file or password")
                 .When(c => c.EnableSsl);
+
+            SharedValidator.RuleFor(c => c.LogSizeLimit).InclusiveBetween(1, 10);
 
             SharedValidator.RuleFor(c => c.Branch).NotEmpty().WithMessage("Branch name is required, 'master' is the default");
             SharedValidator.RuleFor(c => c.UpdateScriptPath).IsValidPath().When(c => c.UpdateMechanism == UpdateMechanism.Script);
@@ -81,29 +85,48 @@ namespace Prowlarr.Api.V1.Config
             return cert != null;
         }
 
+        private bool IsMatchingPassword(HostConfigResource resource)
+        {
+            var user = _userService.FindUser();
+
+            if (user != null && user.Password == resource.Password)
+            {
+                return true;
+            }
+
+            if (resource.Password == resource.PasswordConfirmation)
+            {
+                return true;
+            }
+
+            return false;
+        }
+
         public override HostConfigResource GetResourceById(int id)
         {
             return GetHostConfig();
         }
 
         [HttpGet]
+        [Produces("application/json")]
         public HostConfigResource GetHostConfig()
         {
             var resource = HostConfigResourceMapper.ToResource(_configFileProvider, _configService);
             resource.Id = 1;
 
             var user = _userService.FindUser();
-            if (user != null)
-            {
-                resource.Username = user.Username;
-                resource.Password = user.Password;
-            }
+
+            resource.Username = user?.Username ?? string.Empty;
+            resource.Password = user?.Password ?? string.Empty;
+            resource.PasswordConfirmation = string.Empty;
 
             return resource;
         }
 
         [RestPutById]
-        public ActionResult<HostConfigResource> SaveHostConfig(HostConfigResource resource)
+        [Consumes("application/json")]
+        [Produces("application/json")]
+        public ActionResult<HostConfigResource> SaveHostConfig([FromBody] HostConfigResource resource)
         {
             var dictionary = resource.GetType()
                                      .GetProperties(BindingFlags.Instance | BindingFlags.Public)
